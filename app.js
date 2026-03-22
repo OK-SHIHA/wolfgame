@@ -384,6 +384,8 @@
       dayAnnouncement: "",
       votesByVoter: {},
       voteHistory: [],
+      voteResultByRound: {},
+      nightHistory: [],
       lastExecutedByVoteId: null,
       lastVoteAdditionalVictimId: null,
       currentVoterIndex: 0,
@@ -559,6 +561,8 @@
     const setupKnightConsecutiveGuardSelect = document.getElementById("setup-knight-consecutive-guard");
     const setupWolfTargetVisibilitySelect = document.getElementById("setup-wolf-target-visibility");
     const setupTestModeCheckbox = document.getElementById("setup-test-mode");
+    const timerHeading = document.getElementById("timer-heading");
+    const timerRow = document.querySelector(".timer-row");
 
     function getOtherWolvesTargetText(sourceMap, viewerId) {
       const rows = Object.entries(sourceMap)
@@ -886,6 +890,12 @@
       daySection.classList.toggle("hidden", phase !== "day");
       voteSection.classList.toggle("hidden", phase !== "vote");
       endSection.classList.toggle("hidden", phase !== "ended");
+      if (timerHeading) {
+        timerHeading.classList.toggle("hidden", phase === "ended");
+      }
+      if (timerRow) {
+        timerRow.classList.toggle("hidden", phase === "ended");
+      }
       const labels = {
         night0: "1日目夜",
         night: "夜フェーズ",
@@ -952,6 +962,14 @@
       if (!endDetailsSection) return;
       endDetailsSection.innerHTML = "";
 
+      const voteHistoryByRound = new Map();
+      state.voteHistory.forEach((vote) => {
+        if (!voteHistoryByRound.has(vote.round)) {
+          voteHistoryByRound.set(vote.round, []);
+        }
+        voteHistoryByRound.get(vote.round).push(vote);
+      });
+
       // 役職表示
       const rolesHeading = document.createElement("h4");
       rolesHeading.textContent = "全員の役職";
@@ -967,24 +985,160 @@
       });
       endDetailsSection.appendChild(rolesList);
 
-      // 投票結果
+      // 投票結果（日毎）
       const votesHeading = document.createElement("h4");
-      votesHeading.textContent = "投票先";
+      votesHeading.textContent = "投票先（日毎）";
       endDetailsSection.appendChild(votesHeading);
 
       const votesList = document.createElement("ul");
       votesList.className = "end-details-list";
-      state.voteHistory.forEach((vote) => {
+
+      const voteRounds = Array.from(voteHistoryByRound.keys()).sort((left, right) => left - right);
+      voteRounds.forEach((round) => {
+        const rows = voteHistoryByRound.get(round) || [];
+        const compactVotes = rows
+          .map((vote) => `${vote.voterName}→${vote.targetName}`)
+          .join(" / ");
+        const resultText = state.voteResultByRound[round] || "結果記録なし";
         const item = document.createElement("li");
-        item.textContent = `${vote.round}日目: ${vote.voterName} → ${vote.targetName}`;
+        item.textContent = `${round}日目: ${compactVotes} ｜ 結果: ${resultText}`;
         votesList.appendChild(item);
       });
-      if (state.voteHistory.length === 0) {
+      if (voteRounds.length === 0) {
         const item = document.createElement("li");
         item.textContent = "投票が行われていません";
         votesList.appendChild(item);
       }
       endDetailsSection.appendChild(votesList);
+
+      // 襲撃ログ
+      const wolfHeading = document.createElement("h4");
+      wolfHeading.textContent = "襲撃先とその結果";
+      endDetailsSection.appendChild(wolfHeading);
+
+      const wolfList = document.createElement("ul");
+      wolfList.className = "end-details-list";
+      state.nightHistory.forEach((log) => {
+        const item = document.createElement("li");
+        const targetsText = log.wolfTargets.length > 0 ? log.wolfTargets.join(" / ") : "記録なし";
+        item.textContent = `${log.round}日目夜: 襲撃先 ${targetsText} ｜ 結果: ${log.wolfResult}`;
+        wolfList.appendChild(item);
+      });
+      if (state.nightHistory.length === 0) {
+        const item = document.createElement("li");
+        item.textContent = "襲撃ログはありません";
+        wolfList.appendChild(item);
+      }
+      endDetailsSection.appendChild(wolfList);
+
+      // 占いログ
+      const seerHeading = document.createElement("h4");
+      seerHeading.textContent = "占い先とその結果";
+      endDetailsSection.appendChild(seerHeading);
+
+      const seerList = document.createElement("ul");
+      seerList.className = "end-details-list";
+      const firstDaySeerLogs = state.players
+        .filter((player) => isDivinationRole(player.role))
+        .map((player) => ({
+          player,
+          result: state.nightZeroSeerResultByPlayer[player.id],
+        }))
+        .filter((entry) => entry.result);
+      firstDaySeerLogs.forEach((entry) => {
+        const item = document.createElement("li");
+        item.textContent = "1日目夜(初日): "
+          + `${entry.player.name}（${ROLE_LABELS[entry.player.role]}） ｜ 結果: ${entry.result}`;
+        seerList.appendChild(item);
+      });
+      state.nightHistory.forEach((log) => {
+        log.seerChecks.forEach((row) => {
+          const item = document.createElement("li");
+          item.textContent = `${log.round}日目夜: ${row.actorName}（${row.actorRoleLabel}） → ${row.targetName} ｜ 結果: ${row.result}`;
+          seerList.appendChild(item);
+        });
+      });
+      if (seerList.childElementCount === 0) {
+        const item = document.createElement("li");
+        item.textContent = "占いログはありません";
+        seerList.appendChild(item);
+      }
+      endDetailsSection.appendChild(seerList);
+
+      // 霊媒ログ
+      const mediumHeading = document.createElement("h4");
+      mediumHeading.textContent = "霊媒師の結果";
+      endDetailsSection.appendChild(mediumHeading);
+
+      const mediumList = document.createElement("ul");
+      mediumList.className = "end-details-list";
+      state.nightHistory.forEach((log) => {
+        log.mediumChecks.forEach((row) => {
+          const item = document.createElement("li");
+          item.textContent = `${log.round}日目夜: ${row.actorName} ｜ 結果: ${row.result}`;
+          mediumList.appendChild(item);
+        });
+      });
+      if (mediumList.childElementCount === 0) {
+        const item = document.createElement("li");
+        item.textContent = "霊媒ログはありません";
+        mediumList.appendChild(item);
+      }
+      endDetailsSection.appendChild(mediumList);
+    }
+
+    function buildNightHistoryLog(victims) {
+      const wolfTargets = Object.entries(state.nightActions.wolfVotesByVoter)
+        .map(([voterId, targetId]) => {
+          const actor = findPlayerById(Number(voterId));
+          if (!actor) return null;
+          if (targetId === "skip") {
+            return `${actor.name}→襲撃しない`;
+          }
+          const target = findPlayerById(Number(targetId));
+          if (!target) return `${actor.name}→不明`;
+          return `${actor.name}→${target.name}`;
+        })
+        .filter(Boolean);
+
+      const seerChecks = Object.entries(state.nightActions.seerChecksByVoter)
+        .map(([voterId, targetId]) => {
+          const actor = findPlayerById(Number(voterId));
+          const target = findPlayerById(Number(targetId));
+          if (!actor || !target) return null;
+          const result = state.nightActionResultByActor[actor.id] || getDivinationResultText(actor.role, target);
+          return {
+            actorName: actor.name,
+            actorRoleLabel: ROLE_LABELS[actor.role],
+            targetName: target.name,
+            result,
+          };
+        })
+        .filter(Boolean);
+
+      const mediumChecks = Object.entries(state.nightActions.mediumChecksByVoter)
+        .map(([voterId]) => {
+          const actor = findPlayerById(Number(voterId));
+          if (!actor) return null;
+          const result = state.nightActionResultByActor[actor.id] || "結果なし";
+          return {
+            actorName: actor.name,
+            result,
+          };
+        })
+        .filter(Boolean);
+
+      const wolfResult = victims.length > 0
+        ? `犠牲者: ${victims.map((player) => player.name).join("、")}`
+        : "犠牲者なし";
+
+      state.nightHistory.push({
+        round: state.round,
+        wolfTargets,
+        wolfResult,
+        seerChecks,
+        mediumChecks,
+      });
     }
 
     function resetNightActions() {
@@ -1325,6 +1479,7 @@
       } else {
         state.dayAnnouncement = "昨晩の犠牲者はいませんでした。";
       }
+      buildNightHistoryLog(victims);
       state.pendingNightVictimId = null;
       state.pendingPsychoDeathIds = [];
       renderAlivePlayers();
@@ -1503,6 +1658,7 @@
         : "投票の結果、犠牲者は出ませんでした。";
       voteVoterLabel.textContent = voteResultSummary;
       voteNote.textContent = voteResultSummary;
+      state.voteResultByRound[state.round] = voteResultSummary;
       
       // 勝利条件をチェック
       if (checkWinnerAndEnd()) {
@@ -1965,6 +2121,8 @@
       state.dayAnnouncement = "";
       state.votesByVoter = {};
       state.voteHistory = [];
+      state.voteResultByRound = {};
+      state.nightHistory = [];
       state.lastExecutedByVoteId = null;
       state.lastVoteAdditionalVictimId = null;
       state.currentVoterIndex = 0;
@@ -2016,6 +2174,12 @@
       }
       if (setupTestModeCheckbox) {
         setupTestModeCheckbox.checked = previousTestMode;
+      }
+      if (timerHeading) {
+        timerHeading.classList.remove("hidden");
+      }
+      if (timerRow) {
+        timerRow.classList.remove("hidden");
       }
       updatePhaseTimerUI();
       renderPlayersPreview();
