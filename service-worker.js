@@ -1,11 +1,11 @@
-const CACHE_NAME = "jinro-offline-v2";
+const CACHE_NAME = "jinro-offline-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
   "./manifest.webmanifest",
-  "./icons/icon.jpg"
+  "./icons/icon.png"
 ];
 
 self.addEventListener("install", (event) => {
