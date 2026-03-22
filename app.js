@@ -32,6 +32,14 @@
       setupHelp: "夜に1人を占い、白/黒を判定できる。",
       revealDescription: "市民陣営。夜に1人を占って白/黒を判定できます。",
     },
+    sage: {
+      label: "賢者",
+      camp: "citizen",
+      adjustable: true,
+      defaultCount: 0,
+      setupHelp: "占い師と同様に占えるが、占った相手の役職名がわかる。",
+      revealDescription: "市民陣営。夜に1人を占って、その人の役職名を知ることができます。",
+    },
     baker: {
       label: "パン屋",
       camp: "citizen",
@@ -55,6 +63,14 @@
       defaultCount: 0,
       setupHelp: "夜に1人を護衛し、人狼の襲撃を防げる。",
       revealDescription: "市民陣営。夜に1人を護衛し、襲撃を防げます。",
+    },
+    mayor: {
+      label: "市長",
+      camp: "citizen",
+      adjustable: true,
+      defaultCount: 0,
+      setupHelp: "市民陣営。投票時に自分の票が2票分として集計される。",
+      revealDescription: "市民陣営。特殊能力はありませんが、投票時は2票分として集計されます。",
     },
     twin: {
       label: "双子",
@@ -99,7 +115,7 @@
     },
   };
 
-  const ROLE_ORDER = ["wolf", "ablewolf", "citizen", "seer", "baker", "medium", "knight", "madman", "fanatic", "psycho", "whisperingmadman", "twin"];
+  const ROLE_ORDER = ["wolf", "ablewolf", "citizen", "seer", "sage", "baker", "medium", "knight", "mayor", "madman", "fanatic", "psycho", "whisperingmadman", "twin"];
   const ADJUSTABLE_ROLES = ROLE_ORDER.filter((role) => ROLE_DEFINITIONS[role].adjustable);
 
   const ROLE_LABELS = Object.fromEntries(
@@ -158,6 +174,7 @@
       wolves,
       citizens,
       seers: normalized.seer,
+      sages: normalized.sage,
       bakers: normalized.baker,
       mediums: normalized.medium,
       fanatics: normalized.fanatic,
@@ -194,6 +211,52 @@
     }));
   }
 
+  function getVoteWeight(role) {
+    return role === "mayor" ? 2 : 1;
+  }
+
+  function buildVoteTally(votesByVoter, players) {
+    const byId = new Map((players || []).map((player) => [Number(player.id), player]));
+    const tally = new Map();
+    Object.entries(votesByVoter || {}).forEach(([voterId, targetId]) => {
+      const voter = byId.get(Number(voterId)) || null;
+      const target = byId.get(Number(targetId)) || null;
+      if (!target) return;
+      const weight = getVoteWeight(voter?.role);
+      tally.set(Number(targetId), (tally.get(Number(targetId)) || 0) + weight);
+    });
+    return tally;
+  }
+
+  function isDivinationRole(role) {
+    return role === "seer" || role === "sage";
+  }
+
+  function getDivinationResultText(actorRole, target) {
+    if (!target) return "判定対象が見つかりません。";
+    if (actorRole === "sage") {
+      const roleLabel = ROLE_LABELS[target.role] || target.role;
+      return `${target.name}は${roleLabel}である。`;
+    }
+    const result = target.role === "wolf" || target.role === "ablewolf" ? "人狼" : "人狼ではない";
+    return `${target.name}は${result}。`;
+  }
+
+  function collectPsychoDeathCandidatesFromDivinations(divinationChecksByVoter, players) {
+    const byId = new Map((players || []).map((player) => [Number(player.id), player]));
+    const candidates = new Set();
+    Object.entries(divinationChecksByVoter || {}).forEach(([voterId, targetId]) => {
+      const voter = byId.get(Number(voterId)) || null;
+      const target = byId.get(Number(targetId)) || null;
+      if (!voter || !voter.alive || !isDivinationRole(voter.role)) return;
+      if (!target || !target.alive) return;
+      if (target.role === "psycho") {
+        candidates.add(voter.id);
+      }
+    });
+    return Array.from(candidates).sort((left, right) => left - right);
+  }
+
   function formatTime(totalSeconds) {
     const safe = Math.max(0, Math.floor(totalSeconds));
     const minutes = String(Math.floor(safe / 60)).padStart(2, "0");
@@ -218,6 +281,9 @@
     createRoleDeck,
     shuffle,
     buildPlayers,
+    buildVoteTally,
+    getDivinationResultText,
+    collectPsychoDeathCandidatesFromDivinations,
     formatTime,
     evaluateWinner,
   };
@@ -312,6 +378,7 @@
     const voteProgress = document.getElementById("vote-progress");
     const voteTally = document.getElementById("vote-tally");
     const voteNote = document.getElementById("vote-note");
+    const toVotePhaseButton = document.getElementById("to-vote-phase");
     const startNightAfterVoteButton = document.getElementById("start-night-after-vote");
     const endTitle = document.getElementById("end-title");
     const winnerText = document.getElementById("winner-text");
@@ -328,6 +395,7 @@
     const citizenRoleGrid = document.getElementById("role-grid-citizen");
     const wolfRoleGrid = document.getElementById("role-grid-wolf");
     const roleCountViews = {};
+    const roleAdjustButtonViews = {};
 
     function getWolfNames() {
       return state.players
@@ -359,8 +427,12 @@
     function formatJudgementMessageHtml(message) {
       const escaped = escapeHtml(message || "");
       return escaped
-        .replace(/人狼ではない/g, '<span class="judge-not-wolf">人狼ではない</span>')
-        .replace(/人狼/g, '<span class="judge-wolf">人狼</span>')
+        .replace(/人狼ではない|人狼/g, (matched) => {
+          if (matched === "人狼ではない") {
+            return '<span class="judge-not-wolf">人狼ではない</span>';
+          }
+          return '<span class="judge-wolf">人狼</span>';
+        })
         .replace(/\n/g, "<br>");
     }
 
@@ -393,23 +465,24 @@
       
       const whisperingMadmen = state.players.filter((player) => player.role === "whisperingmadman");
       const hasWhisperingMadman = whisperingMadmen.length > 0;
-      
-      let title = "";
+
       if (role === "wolf" || role === "ablewolf") {
-        title = "人狼";
-        const ableWolfLine = hasAbleWolfInGame ? `\n能ある人狼: ${ableWolvesText}` : "";
+        const lines = [];
+        if (wolves.length > 0) {
+          lines.push(`人狼: ${wolvesText}`);
+        }
+        if (hasAbleWolfInGame) {
+          lines.push(`能ある人狼: ${ableWolvesText}`);
+        }
         if (hasWhisperingMadman) {
           const whisperingText = whisperingMadmen.map((player) => player.name).join("、");
-          targetElement.textContent = `${title}\n人狼: ${wolvesText}${ableWolfLine}\nささやく狂人: ${whisperingText}`;
-        } else {
-          targetElement.textContent = `${title}\n人狼: ${wolvesText}${ableWolfLine}`;
+          lines.push(`ささやく狂人: ${whisperingText}`);
         }
+        targetElement.textContent = lines.join("\n");
       } else if (role === "fanatic") {
-        title = "狂信者";
-        targetElement.textContent = `${title}\n人狼: ${allTrueWolvesText}`;
+        targetElement.textContent = `人狼: ${allTrueWolvesText}`;
       } else if (role === "whisperingmadman") {
-        title = "ささやく狂人";
-        targetElement.textContent = `${title}\n人狼: ${allTrueWolvesText}`;
+        targetElement.textContent = `人狼: ${allTrueWolvesText}`;
       }
       targetElement.classList.remove("hidden");
     }
@@ -464,6 +537,8 @@
         minusButton.dataset.roleAction = "minus";
         minusButton.dataset.role = role;
         row.appendChild(minusButton);
+        roleAdjustButtonViews[role] = roleAdjustButtonViews[role] || {};
+        roleAdjustButtonViews[role].minus = minusButton;
       }
 
       const count = document.createElement("strong");
@@ -479,6 +554,8 @@
         plusButton.dataset.roleAction = "plus";
         plusButton.dataset.role = role;
         row.appendChild(plusButton);
+        roleAdjustButtonViews[role] = roleAdjustButtonViews[role] || {};
+        roleAdjustButtonViews[role].plus = plusButton;
       } else {
         const autoLabel = document.createElement("span");
         autoLabel.className = "hint";
@@ -597,8 +674,20 @@
         - ADJUSTABLE_ROLES.reduce((sum, role) => sum + (state.roleCounts[role] || 0), 0);
       state.roleCounts.citizen = autoCitizen;
       ROLE_ORDER.forEach((role) => {
+        const countValue = state.roleCounts[role] || 0;
         if (roleCountViews[role]) {
-          roleCountViews[role].textContent = String(state.roleCounts[role] || 0);
+          roleCountViews[role].textContent = String(countValue);
+        }
+
+        const adjustViews = roleAdjustButtonViews[role];
+        if (adjustViews?.minus) {
+          adjustViews.minus.classList.remove("hidden");
+          adjustViews.minus.classList.toggle("counter-control-hidden", countValue <= 0);
+        }
+        if (adjustViews?.plus) {
+          const shouldHidePlus = role === "twin" && countValue >= 2;
+          adjustViews.plus.classList.remove("hidden");
+          adjustViews.plus.classList.toggle("counter-control-hidden", shouldHidePlus);
         }
       });
       if (roleCountViews.citizen) {
@@ -717,7 +806,7 @@
       voteSection.classList.toggle("hidden", phase !== "vote");
       endSection.classList.toggle("hidden", phase !== "ended");
       const labels = {
-        night0: "0日目夜",
+        night0: "1日目夜",
         night: "夜フェーズ",
         day: "朝フェーズ",
         vote: "投票フェーズ",
@@ -839,7 +928,7 @@
       if (isTrueWolfRole(actor.role)) {
         return alive.filter((player) => !isTrueWolfRole(player.role));
       }
-      if (actor.role === "seer") {
+      if (isDivinationRole(actor.role)) {
         return alive.filter((player) => player.id !== actor.id);
       }
       if (actor.role === "knight") {
@@ -867,10 +956,9 @@
         state.nightActionDoneByActor[actor.id] = true;
       }
 
-      if (actor.role === "seer") {
+      if (isDivinationRole(actor.role)) {
         state.nightActions.seerChecksByVoter[actor.id] = target.id;
-        const result = getWerewolfJudgementText(target.role);
-        state.nightActionResultByActor[actor.id] = `${target.name}は${result}。`;
+        state.nightActionResultByActor[actor.id] = getDivinationResultText(actor.role, target);
         state.nightActionDoneByActor[actor.id] = true;
       }
 
@@ -894,36 +982,6 @@
       renderNightStep();
     }
 
-    function renderNightTargetConfirm(actor, selectedTargetId) {
-      const selected = findPlayerById(selectedTargetId);
-      if (!selected || !selected.alive) {
-        state.nightActionSelection = null;
-        renderNightStep();
-        return;
-      }
-
-      nightGuide.textContent = `${selected.name} さんでいいですか？`;
-      nightActionButtons.innerHTML = "";
-
-      const confirmButton = document.createElement("button");
-      confirmButton.type = "button";
-      confirmButton.textContent = "決定";
-      confirmButton.addEventListener("click", () => {
-        selectNightTarget(actor, selected.id);
-      });
-      nightActionButtons.appendChild(confirmButton);
-
-      const cancelButton = document.createElement("button");
-      cancelButton.type = "button";
-      cancelButton.className = "ghost";
-      cancelButton.textContent = "選び直す";
-      cancelButton.addEventListener("click", () => {
-        state.nightActionSelection = null;
-        renderNightStep();
-      });
-      nightActionButtons.appendChild(cancelButton);
-    }
-
     function renderNightActionForActor(actor) {
       nightActionButtons.innerHTML = "";
       nightActionDoneButton.disabled = !state.nightActionDoneByActor[actor.id];
@@ -933,7 +991,7 @@
         return;
       }
 
-      if (actor.role === "citizen" || actor.role === "madman" || actor.role === "fanatic" || actor.role === "psycho" || actor.role === "whisperingmadman") {
+      if (actor.role === "citizen" || actor.role === "mayor" || actor.role === "madman" || actor.role === "fanatic" || actor.role === "psycho" || actor.role === "whisperingmadman") {
         nightGuide.textContent = "ダミーアクションを実行してください。";
         if (actor.role === "fanatic") {
           const wolvesText = getWolfNames().join("、") || "なし";
@@ -990,11 +1048,6 @@
         return;
       }
 
-      if (state.nightActionSelection) {
-        renderNightTargetConfirm(actor, state.nightActionSelection);
-        return;
-      }
-
       if (isTrueWolfRole(actor.role)) {
         nightGuide.textContent = "襲撃対象を選んでください。";
         if (state.wolfTargetVisibility === "show") {
@@ -1002,7 +1055,7 @@
           nightGuide.textContent = `襲撃対象を選んでください。\n他の人狼の襲撃先: ${otherTargetsText}`;
         }
       }
-      if (actor.role === "seer") {
+      if (isDivinationRole(actor.role)) {
         nightGuide.textContent = "占い対象を選んでください。";
       }
       if (actor.role === "knight") {
@@ -1023,12 +1076,43 @@
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = candidate.name;
+        if (state.nightActionSelection === candidate.id) {
+          button.classList.add("selected");
+        }
         button.addEventListener("click", () => {
           state.nightActionSelection = candidate.id;
           renderNightStep();
         });
         nightActionButtons.appendChild(button);
       });
+
+      if (isDivinationRole(actor.role) || actor.role === "knight" || isTrueWolfRole(actor.role)) {
+        const actionButton = document.createElement("button");
+        actionButton.type = "button";
+        actionButton.textContent = isDivinationRole(actor.role)
+          ? "占う"
+          : actor.role === "knight"
+            ? "護衛する"
+            : "襲撃する";
+        actionButton.disabled = !state.nightActionSelection;
+        actionButton.addEventListener("click", () => {
+          if (!state.nightActionSelection) return;
+          selectNightTarget(actor, state.nightActionSelection);
+        });
+        nightActionButtons.appendChild(actionButton);
+
+        if (state.nightActionSelection) {
+          const resetButton = document.createElement("button");
+          resetButton.type = "button";
+          resetButton.className = "ghost";
+          resetButton.textContent = "選び直す";
+          resetButton.addEventListener("click", () => {
+            state.nightActionSelection = null;
+            renderNightStep();
+          });
+          nightActionButtons.appendChild(resetButton);
+        }
+      }
 
       if (actor.role === "ablewolf") {
         const noAttackButton = document.createElement("button");
@@ -1092,14 +1176,11 @@
         selectedVictimId = tied[Math.floor(Math.random() * tied.length)] || null;
       }
 
-      Object.entries(state.nightActions.seerChecksByVoter).forEach(([voterId, targetId]) => {
-        const voter = findPlayerById(Number(voterId));
-        const target = findPlayerById(Number(targetId));
-        if (!voter || !voter.alive || !target || !target.alive) return;
-        if (target.role === "psycho") {
-          psychoDeathCandidates.add(voter.id);
-        }
-      });
+      const divinationPsychoDeaths = collectPsychoDeathCandidatesFromDivinations(
+        state.nightActions.seerChecksByVoter,
+        state.players,
+      );
+      divinationPsychoDeaths.forEach((playerId) => psychoDeathCandidates.add(playerId));
 
       Object.entries(state.nightActions.knightProtectByVoter).forEach(([voterId, targetId]) => {
         const voter = findPlayerById(Number(voterId));
@@ -1132,30 +1213,26 @@
     }
 
     function applyNightResult() {
-      const announcementLines = [];
-      if (!state.pendingNightVictimId) {
-        announcementLines.push("昨晩の犠牲者はいませんでした。");
-      } else {
-        const victim = findPlayerById(state.pendingNightVictimId);
-        if (victim && victim.alive) {
-          victim.alive = false;
-          announcementLines.push(`昨晩の犠牲者: ${victim.name}`);
-        } else {
-          announcementLines.push("昨晩の犠牲者はいませんでした。");
-        }
+      const victimIds = new Set();
+      if (state.pendingNightVictimId) {
+        victimIds.add(Number(state.pendingNightVictimId));
       }
+      state.pendingPsychoDeathIds.forEach((playerId) => {
+        victimIds.add(Number(playerId));
+      });
 
-      const psychoDeaths = state.pendingPsychoDeathIds
+      const victims = Array.from(victimIds)
         .map((playerId) => findPlayerById(playerId))
         .filter((player) => player && player.alive);
-      psychoDeaths.forEach((player) => {
+      victims.forEach((player) => {
         player.alive = false;
       });
-      if (psychoDeaths.length > 0) {
-        announcementLines.push(`サイコに関わったため死亡: ${psychoDeaths.map((player) => player.name).join("、")}`);
-      }
 
-      state.dayAnnouncement = announcementLines.join("\n");
+      if (victims.length > 0) {
+        state.dayAnnouncement = `昨晩の犠牲者: ${victims.map((player) => player.name).join("、")}`;
+      } else {
+        state.dayAnnouncement = "昨晩の犠牲者はいませんでした。";
+      }
       state.pendingNightVictimId = null;
       state.pendingPsychoDeathIds = [];
       renderAlivePlayers();
@@ -1174,21 +1251,8 @@
       if (fromNight) {
         applyNightResult();
         state.round += 1;
-      } else if (state.pendingPsychoDeathIds.length > 0) {
-        const psychoDeaths = state.pendingPsychoDeathIds
-          .map((playerId) => findPlayerById(playerId))
-          .filter((player) => player && player.alive);
-        psychoDeaths.forEach((player) => {
-          player.alive = false;
-        });
-        if (psychoDeaths.length > 0) {
-          state.dayAnnouncement = state.dayAnnouncement
-            ? `${state.dayAnnouncement}\nサイコに関わったため死亡: ${psychoDeaths.map((player) => player.name).join("、")}`
-            : `サイコに関わったため死亡: ${psychoDeaths.map((player) => player.name).join("、")}`;
-        }
-        state.pendingPsychoDeathIds = [];
-        renderAlivePlayers();
-        renderVictims();
+      } else {
+        applyNightResult();
       }
       const bakerAlive = state.players.some((player) => player.alive && player.role === "baker");
       if (bakerAlive) {
@@ -1203,11 +1267,14 @@
       
       setGamePhase("day");
       if (hasWinner) {
-        // 勝利が決定している場合 - 犠牲者発表と勝利画面を同時に表示
-        renderGameEndDetails();
-        winnerText.classList.remove("hidden");
-        displayGameEnd();
+        if (toVotePhaseButton) {
+          toVotePhaseButton.textContent = "結果を確認して次へ";
+        }
+        updateGameStatus("朝の結果を確認してから次へ進んでください。");
       } else {
+        if (toVotePhaseButton) {
+          toVotePhaseButton.textContent = "投票フェーズへ進む";
+        }
         // ゲーム継続
         updateGameStatus("議論を行い、投票フェーズへ進んでください。");
       }
@@ -1279,10 +1346,7 @@
         }
       });
 
-      const tally = new Map();
-      Object.values(state.votesByVoter).forEach((targetId) => {
-        tally.set(targetId, (tally.get(targetId) || 0) + 1);
-      });
+      const tally = buildVoteTally(state.votesByVoter, state.players);
       renderVoteTally(tally);
 
       let maxVotes = 0;
@@ -1395,37 +1459,35 @@
         return;
       }
 
-      // 投票対象がまだ選択されていない場合
-      if (!state.selectedVoteCandidate) {
-        voteNote.textContent = "投票対象を選んでください。";
-        candidates.forEach((candidate) => {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.textContent = candidate.name;
-          button.addEventListener("click", () => {
-            state.selectedVoteCandidate = candidate.id;
-            renderVoteStep();
-          });
-          voteCandidateButtons.appendChild(button);
-        });
-        return;
-      }
-
-      // 投票対象を選択済み → 確認表示
       const selected = findPlayerById(state.selectedVoteCandidate);
-      if (!selected) {
+      if (state.selectedVoteCandidate && !selected) {
         state.selectedVoteCandidate = null;
-        renderVoteStep();
-        return;
       }
 
-      voteNote.textContent = `${selected.name} さんですか？`;
-      voteCandidateButtons.innerHTML = "";
+      voteNote.textContent = selected
+        ? `${selected.name} さんを選択中です。`
+        : "投票対象を選んでください。";
+
+      candidates.forEach((candidate) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = candidate.name;
+        if (state.selectedVoteCandidate === candidate.id) {
+          button.classList.add("selected");
+        }
+        button.addEventListener("click", () => {
+          state.selectedVoteCandidate = candidate.id;
+          renderVoteStep();
+        });
+        voteCandidateButtons.appendChild(button);
+      });
 
       const confirmButton = document.createElement("button");
       confirmButton.type = "button";
       confirmButton.textContent = "投票する";
+      confirmButton.disabled = !state.selectedVoteCandidate;
       confirmButton.addEventListener("click", () => {
+        if (!state.selectedVoteCandidate) return;
         state.votesByVoter[voter.id] = state.selectedVoteCandidate;
         state.selectedVoteCandidate = null;
         state.voteIdentityConfirmed = false;
@@ -1434,15 +1496,17 @@
       });
       voteCandidateButtons.appendChild(confirmButton);
 
-      const cancelButton = document.createElement("button");
-      cancelButton.type = "button";
-      cancelButton.textContent = "選び直す";
-      cancelButton.className = "ghost";
-      cancelButton.addEventListener("click", () => {
-        state.selectedVoteCandidate = null;
-        renderVoteStep();
-      });
-      voteCandidateButtons.appendChild(cancelButton);
+      if (state.selectedVoteCandidate) {
+        const cancelButton = document.createElement("button");
+        cancelButton.type = "button";
+        cancelButton.textContent = "選び直す";
+        cancelButton.className = "ghost";
+        cancelButton.addEventListener("click", () => {
+          state.selectedVoteCandidate = null;
+          renderVoteStep();
+        });
+        voteCandidateButtons.appendChild(cancelButton);
+      }
     }
 
     function renderNightZeroStep() {
@@ -1466,7 +1530,7 @@
         return;
       }
 
-      if (current.role === "seer") {
+      if (isDivinationRole(current.role)) {
         if (state.firstDaySeerMode === "none") {
           nightZeroGuide.textContent = "初日占いは「なし」設定です。";
           nightZeroStartButton.disabled = true;
@@ -1514,21 +1578,55 @@
           return;
         }
 
-        nightZeroGuide.textContent = "占い対象を1人選んでください。";
+        nightZeroGuide.textContent = "占い対象を選び、「占う」を押してください。";
+        const selectedTargetId = state.nightZeroSelectionByPlayer[current.id];
         candidates.forEach((candidate) => {
           const button = document.createElement("button");
           button.type = "button";
           button.textContent = candidate.name;
+          if (selectedTargetId === candidate.id) {
+            button.classList.add("selected");
+          }
           button.addEventListener("click", () => {
-            const result = getWerewolfJudgementText(candidate.role);
             state.nightZeroSelectionByPlayer[current.id] = candidate.id;
-            state.nightZeroSeerResultByPlayer[current.id] = `${candidate.name}は${result}。`;
             renderNightZeroStep();
           });
           if (nightZeroActionButtons) {
             nightZeroActionButtons.appendChild(button);
           }
         });
+
+        const executeButton = document.createElement("button");
+        executeButton.type = "button";
+        executeButton.textContent = "占う";
+        executeButton.disabled = !selectedTargetId;
+        executeButton.addEventListener("click", () => {
+          const selectedTarget = findPlayerById(state.nightZeroSelectionByPlayer[current.id]);
+          if (!selectedTarget) return;
+          if (selectedTarget.role === "psycho") {
+            addPendingPsychoDeath(current.id);
+          }
+          state.nightZeroSeerResultByPlayer[current.id] = getDivinationResultText(current.role, selectedTarget);
+          renderNightZeroStep();
+        });
+        if (nightZeroActionButtons) {
+          nightZeroActionButtons.appendChild(executeButton);
+        }
+
+        if (selectedTargetId) {
+          const resetButton = document.createElement("button");
+          resetButton.type = "button";
+          resetButton.className = "ghost";
+          resetButton.textContent = "選び直す";
+          resetButton.addEventListener("click", () => {
+            delete state.nightZeroSelectionByPlayer[current.id];
+            renderNightZeroStep();
+          });
+          if (nightZeroActionButtons) {
+            nightZeroActionButtons.appendChild(resetButton);
+          }
+        }
+
         nightZeroStartButton.disabled = true;
         nightZeroDoneButton.disabled = true;
         return;
@@ -1556,7 +1654,7 @@
       }
 
       const target = candidates[Math.floor(Math.random() * candidates.length)];
-      const result = `${target.name}は人狼ではない。`;
+      const result = getDivinationResultText(seerPlayer.role, target);
       state.nightZeroSeerResultByPlayer[seerPlayer.id] = result;
       return result;
     }
@@ -1569,6 +1667,8 @@
       }
       if (state.hasShownCurrent) {
         let canProceed = true;
+        showRoleButton.classList.add("hidden");
+        nextPlayerButton.classList.remove("hidden");
         roleName.textContent = ROLE_LABELS[current.role];
         roleName.classList.remove("hidden");
         if (roleDescription) {
@@ -1605,7 +1705,7 @@
           }
         }
 
-        if (current.role === "seer") {
+        if (isDivinationRole(current.role)) {
           const revealWolfMates = document.getElementById("reveal-wolf-mates");
           if (state.firstDaySeerMode === "none") {
             if (revealWolfMates) {
@@ -1628,24 +1728,55 @@
             } else {
               canProceed = false;
               revealMessage.textContent = `${current.name} さんの役職です。初日占いの対象を選んでください。`;
+              const selectedTargetId = state.nightZeroSelectionByPlayer[current.id];
               const candidates = state.players.filter((player) => player.id !== current.id);
               candidates.forEach((candidate) => {
                 const button = document.createElement("button");
                 button.type = "button";
                 button.textContent = candidate.name;
+                if (selectedTargetId === candidate.id) {
+                  button.classList.add("selected");
+                }
                 button.addEventListener("click", () => {
-                  const result = getWerewolfJudgementText(candidate.role);
                   state.nightZeroSelectionByPlayer[current.id] = candidate.id;
-                  if (candidate.role === "psycho") {
-                    addPendingPsychoDeath(current.id);
-                  }
-                  state.nightZeroSeerResultByPlayer[current.id] = `${candidate.name}は${result}。`;
                   renderRevealStep();
                 });
                 if (revealActionButtons) {
                   revealActionButtons.appendChild(button);
                 }
               });
+
+              const executeButton = document.createElement("button");
+              executeButton.type = "button";
+              executeButton.textContent = "占う";
+              executeButton.disabled = !selectedTargetId;
+              executeButton.addEventListener("click", () => {
+                const selectedTarget = findPlayerById(state.nightZeroSelectionByPlayer[current.id]);
+                if (!selectedTarget) return;
+                if (selectedTarget.role === "psycho") {
+                  addPendingPsychoDeath(current.id);
+                }
+                state.nightZeroSeerResultByPlayer[current.id] = getDivinationResultText(current.role, selectedTarget);
+                renderRevealStep();
+              });
+              if (revealActionButtons) {
+                revealActionButtons.appendChild(executeButton);
+              }
+
+              if (selectedTargetId) {
+                const resetButton = document.createElement("button");
+                resetButton.type = "button";
+                resetButton.className = "ghost";
+                resetButton.textContent = "選び直す";
+                resetButton.addEventListener("click", () => {
+                  delete state.nightZeroSelectionByPlayer[current.id];
+                  renderRevealStep();
+                });
+                if (revealActionButtons) {
+                  revealActionButtons.appendChild(resetButton);
+                }
+              }
+
               if (revealWolfMates) {
                 revealWolfMates.textContent = "";
                 revealWolfMates.classList.add("hidden");
@@ -1670,6 +1801,8 @@
         revealWolfMates.classList.add("hidden");
       }
       revealMessage.textContent = `${current.name} さんの番です。周りに見られないよう「役職を見る」を押してください。`;
+      showRoleButton.classList.remove("hidden");
+      nextPlayerButton.classList.remove("hidden");
       nextPlayerButton.disabled = true;
       showRoleButton.disabled = false;
     }
@@ -1839,7 +1972,7 @@
         state.currentNightActorIndex = 0;
         state.nightActionStarted = false;
         state.pendingNightVictimId = null;
-        state.dayAnnouncement = "0日目のアクションが完了しました。";
+        state.dayAnnouncement = "1日目のアクションが完了しました。";
         state.tieRound = 0;
         voteNote.textContent = "";
         voteTally.innerHTML = "";
@@ -1872,7 +2005,7 @@
       if (state.nightZeroIndex >= state.players.length) {
         state.round = 1;
         state.pendingNightVictimId = null;
-        state.dayAnnouncement = "0日目夜が終了しました。";
+        state.dayAnnouncement = "1日目夜が終了しました。";
         startMorningPhase(false);
         return;
       }
@@ -1897,7 +2030,7 @@
       renderNightStep();
     });
 
-    document.getElementById("to-vote-phase").addEventListener("click", () => {
+    toVotePhaseButton.addEventListener("click", () => {
       // 勝利が既に確定しているか確認
       if (state.gameWinner) {
         displayGameEnd();

@@ -37,11 +37,13 @@ function run() {
     wolf: 0,
     ablewolf: 1,
     seer: 1,
+    sage: 1,
     medium: 1,
   });
   assert.equal(validWithAbleWolfOnly.total, 6);
   assert.equal(validWithAbleWolfOnly.wolves, 1);
-  assert.equal(validWithAbleWolfOnly.citizens, 3);
+  assert.equal(validWithAbleWolfOnly.citizens, 2);
+  assert.equal(validWithAbleWolfOnly.sages, 1);
 
   assert.throws(() => app.validateRoleCounts(2, { wolf: 1, citizen: 1, seer: 0, medium: 0 }));
   assert.throws(() => app.validateRoleCounts(6, { wolf: 0, citizen: 6, seer: 0, medium: 0 }));
@@ -64,18 +66,20 @@ function run() {
     citizen: 2,
     baker: 1,
     seer: 1,
+    sage: 1,
     medium: 1,
     fanatic: 1,
     psycho: 1,
     whisperingmadman: 1,
     twin: 2,
   });
-  assert.equal(deck.length, 13);
+  assert.equal(deck.length, 14);
   assert.equal(deck.filter((role) => role === "wolf").length, 2);
   assert.equal(deck.filter((role) => role === "ablewolf").length, 1);
   assert.equal(deck.filter((role) => role === "citizen").length, 2);
   assert.equal(deck.filter((role) => role === "baker").length, 1);
   assert.equal(deck.filter((role) => role === "seer").length, 1);
+  assert.equal(deck.filter((role) => role === "sage").length, 1);
   assert.equal(deck.filter((role) => role === "medium").length, 1);
   assert.equal(deck.filter((role) => role === "fanatic").length, 1);
   assert.equal(deck.filter((role) => role === "psycho").length, 1);
@@ -90,6 +94,43 @@ function run() {
   assert.equal(players[0].name, "A");
   assert.equal(players[2].role, "citizen");
   assert.equal(players[1].alive, true);
+
+  const votePlayers = [
+    { id: 1, name: "市長", role: "mayor", alive: true },
+    { id: 2, name: "市民A", role: "citizen", alive: true },
+    { id: 3, name: "市民B", role: "citizen", alive: true },
+    { id: 4, name: "人狼", role: "wolf", alive: true },
+  ];
+  const voteTally = app.buildVoteTally(
+    {
+      1: 4,
+      2: 4,
+      4: 2,
+    },
+    votePlayers,
+  );
+  assert.equal(voteTally.get(4), 3);
+  assert.equal(voteTally.get(2), 1);
+
+  assert.equal(
+    app.getDivinationResultText("sage", { name: "太郎", role: "ablewolf" }),
+    "太郎は能ある人狼である。",
+  );
+  assert.equal(
+    app.getDivinationResultText("sage", { name: "花子", role: "psycho" }),
+    "花子はサイコである。",
+  );
+
+  const psychoReactionPlayers = [
+    { id: 1, name: "賢者", role: "sage", alive: true },
+    { id: 2, name: "サイコ", role: "psycho", alive: true },
+    { id: 3, name: "市民", role: "citizen", alive: true },
+  ];
+  const psychoDeathCandidates = app.collectPsychoDeathCandidatesFromDivinations(
+    { 1: 2 },
+    psychoReactionPlayers,
+  );
+  assert.deepEqual(psychoDeathCandidates, [1]);
 
   const ongoing = [
     { role: "wolf", alive: true },
