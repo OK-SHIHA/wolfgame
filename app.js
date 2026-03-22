@@ -40,6 +40,14 @@
       setupHelp: "占い師と同様に占えるが、占った相手の役職名がわかる。",
       revealDescription: "市民陣営。夜に1人を占って、その人の役職名を知ることができます。",
     },
+    sorcerer: {
+      label: "妖術師",
+      camp: "wolf",
+      adjustable: true,
+      defaultCount: 0,
+      setupHelp: "人狼陣営。賢者と同様に夜に1人を占い、役職名を知ることができる。占い・霊媒は白判定。",
+      revealDescription: "人狼陣営。賢者と同様に夜に1人を占って役職名を知ることができます。占い・霊媒は白判定です。",
+    },
     baker: {
       label: "パン屋",
       camp: "citizen",
@@ -71,6 +79,22 @@
       defaultCount: 0,
       setupHelp: "市民陣営。投票時に自分の票が2票分として集計される。",
       revealDescription: "市民陣営。特殊能力はありませんが、投票時は2票分として集計されます。",
+    },
+    nekomata: {
+      label: "猫又",
+      camp: "citizen",
+      adjustable: true,
+      defaultCount: 0,
+      setupHelp: "市民陣営。投票処刑時は生存者1人、襲撃死時は人狼1人を道連れにする。占い・霊媒は白判定。",
+      revealDescription: "市民陣営。投票で死亡すると生存者1人、襲撃で死亡すると人狼1人をランダムで道連れにします。占い・霊媒は白判定です。",
+    },
+    blackcat: {
+      label: "黒猫",
+      camp: "wolf",
+      adjustable: true,
+      defaultCount: 0,
+      setupHelp: "人狼陣営。投票で死亡した時のみ、人狼以外の生存者1人を即時に道連れにする。占い・霊媒は白判定。",
+      revealDescription: "人狼陣営。投票で死亡した時のみ、人狼以外の生存者1人をランダムで即時に道連れにします。襲撃死など投票以外では道連れは発生しません。占い・霊媒は白判定です。",
     },
     twin: {
       label: "双子",
@@ -115,7 +139,7 @@
     },
   };
 
-  const ROLE_ORDER = ["wolf", "ablewolf", "citizen", "seer", "sage", "baker", "medium", "knight", "mayor", "madman", "fanatic", "psycho", "whisperingmadman", "twin"];
+  const ROLE_ORDER = ["wolf", "ablewolf", "citizen", "seer", "sage", "baker", "medium", "knight", "mayor", "nekomata", "madman", "fanatic", "sorcerer", "blackcat", "psycho", "whisperingmadman", "twin"];
   const ADJUSTABLE_ROLES = ROLE_ORDER.filter((role) => ROLE_DEFINITIONS[role].adjustable);
 
   const ROLE_LABELS = Object.fromEntries(
@@ -229,12 +253,12 @@
   }
 
   function isDivinationRole(role) {
-    return role === "seer" || role === "sage";
+    return role === "seer" || role === "sage" || role === "sorcerer";
   }
 
   function getDivinationResultText(actorRole, target) {
     if (!target) return "判定対象が見つかりません。";
-    if (actorRole === "sage") {
+    if (actorRole === "sage" || actorRole === "sorcerer") {
       const roleLabel = ROLE_LABELS[target.role] || target.role;
       return `${target.name}は${roleLabel}である。`;
     }
@@ -255,6 +279,40 @@
       }
     });
     return Array.from(candidates).sort((left, right) => left - right);
+  }
+
+  function resolveNekomataVoteCompanion(executedPlayerId, players, rng = Math.random) {
+    const executed = (players || []).find((player) => player.id === Number(executedPlayerId));
+    if (!executed || executed.role !== "nekomata") return null;
+
+    const aliveOthers = (players || []).filter((player) => player.alive && player.id !== executed.id);
+    if (aliveOthers.length === 0) return null;
+    const target = aliveOthers[Math.floor(rng() * aliveOthers.length)] || null;
+    return target ? target.id : null;
+  }
+
+  function resolveNekomataNightCompanion(attackedPlayerId, players, rng = Math.random) {
+    const attacked = (players || []).find((player) => player.id === Number(attackedPlayerId));
+    if (!attacked || attacked.role !== "nekomata") return null;
+
+    const aliveWolves = (players || []).filter((player) =>
+      player.alive && (player.role === "wolf" || player.role === "ablewolf"),
+    );
+    if (aliveWolves.length === 0) return null;
+    const target = aliveWolves[Math.floor(rng() * aliveWolves.length)] || null;
+    return target ? target.id : null;
+  }
+
+  function resolveBlackcatVoteCompanion(executedPlayerId, players, rng = Math.random) {
+    const executed = (players || []).find((player) => player.id === Number(executedPlayerId));
+    if (!executed || executed.role !== "blackcat") return null;
+
+    const aliveNonWolves = (players || []).filter((player) =>
+      player.alive && player.id !== executed.id && player.role !== "wolf" && player.role !== "ablewolf",
+    );
+    if (aliveNonWolves.length === 0) return null;
+    const target = aliveNonWolves[Math.floor(rng() * aliveNonWolves.length)] || null;
+    return target ? target.id : null;
   }
 
   function formatTime(totalSeconds) {
@@ -284,6 +342,9 @@
     buildVoteTally,
     getDivinationResultText,
     collectPsychoDeathCandidatesFromDivinations,
+    resolveNekomataVoteCompanion,
+    resolveNekomataNightCompanion,
+    resolveBlackcatVoteCompanion,
     formatTime,
     evaluateWinner,
   };
@@ -324,12 +385,14 @@
       votesByVoter: {},
       voteHistory: [],
       lastExecutedByVoteId: null,
+      lastVoteAdditionalVictimId: null,
       currentVoterIndex: 0,
       tieCandidates: null,
       tieRound: 0,
-      tieRule: "revote",
-      showVoteTally: true,
+      tieRule: "random",
+      showVoteTally: false,
       firstDaySeerMode: "random-white",
+      testMode: false,
       voteFinalized: false,
       gameWinner: null,
       knightConsecutiveGuard: "allowed",
@@ -459,7 +522,7 @@
         .filter((player) => !isTrueWolfRole(role) || player.id !== viewerId)
         .map((player) => player.name);
       const ableWolvesText = ableWolves.length > 0 ? ableWolves.join("、") : "なし";
-      const hasAbleWolfInGame = state.players.some((player) => player.role === "ablewolf");
+      const hasOtherAbleWolves = ableWolves.length > 0;
 
       const allTrueWolvesText = [...wolves, ...ableWolves].join("、") || "なし";
       
@@ -471,7 +534,7 @@
         if (wolves.length > 0) {
           lines.push(`人狼: ${wolvesText}`);
         }
-        if (hasAbleWolfInGame) {
+        if (hasOtherAbleWolves) {
           lines.push(`能ある人狼: ${ableWolvesText}`);
         }
         if (hasWhisperingMadman) {
@@ -495,6 +558,7 @@
     const setupFirstDaySeerSelect = document.getElementById("setup-first-day-seer");
     const setupKnightConsecutiveGuardSelect = document.getElementById("setup-knight-consecutive-guard");
     const setupWolfTargetVisibilitySelect = document.getElementById("setup-wolf-target-visibility");
+    const setupTestModeCheckbox = document.getElementById("setup-test-mode");
 
     function getOtherWolvesTargetText(sourceMap, viewerId) {
       const rows = Object.entries(sourceMap)
@@ -741,7 +805,9 @@
       const alive = getAlivePlayers();
       alive.forEach((player) => {
         const item = document.createElement("li");
-        item.textContent = player.name;
+        item.textContent = state.testMode
+          ? `${player.name}（${ROLE_LABELS[player.role]}）`
+          : player.name;
         alivePlayerList.appendChild(item);
       });
     }
@@ -750,14 +816,29 @@
       const victimsSection = document.getElementById("victims-list");
       if (!victimsSection) return;
       victimsSection.innerHTML = "";
-      const victims = state.players.filter((player) => !player.alive);
+      const nameOrderIndex = new Map(
+        state.names.map((name, index) => [name, index]),
+      );
+      const victims = state.players
+        .filter((player) => !player.alive)
+        .sort((left, right) => {
+          const leftIndex = nameOrderIndex.has(left.name)
+            ? nameOrderIndex.get(left.name)
+            : Number.MAX_SAFE_INTEGER;
+          const rightIndex = nameOrderIndex.has(right.name)
+            ? nameOrderIndex.get(right.name)
+            : Number.MAX_SAFE_INTEGER;
+          return leftIndex - rightIndex;
+        });
       if (victims.length === 0) {
         victimsSection.textContent = "犠牲者なし";
         return;
       }
       victims.forEach((player) => {
         const item = document.createElement("li");
-        item.textContent = player.name;
+        item.textContent = state.testMode
+          ? `${player.name}（${ROLE_LABELS[player.role]}）`
+          : player.name;
         victimsSection.appendChild(item);
       });
     }
@@ -991,7 +1072,7 @@
         return;
       }
 
-      if (actor.role === "citizen" || actor.role === "mayor" || actor.role === "madman" || actor.role === "fanatic" || actor.role === "psycho" || actor.role === "whisperingmadman") {
+      if (actor.role === "citizen" || actor.role === "mayor" || actor.role === "madman" || actor.role === "fanatic" || actor.role === "blackcat" || actor.role === "psycho" || actor.role === "whisperingmadman") {
         nightGuide.textContent = "ダミーアクションを実行してください。";
         if (actor.role === "fanatic") {
           const wolvesText = getWolfNames().join("、") || "なし";
@@ -1153,6 +1234,7 @@
         return;
       }
 
+      nightQuestion.textContent = `${current.name}さんの役職: ${ROLE_LABELS[current.role]}`;
       nightActionStartButton.disabled = true;
       renderNightActionForActor(current);
     }
@@ -1206,6 +1288,16 @@
           state.pendingNightVictimId = null;
         } else {
           state.pendingNightVictimId = selectedVictimId;
+        }
+      }
+
+      if (state.pendingNightVictimId) {
+        const pendingVictim = findPlayerById(state.pendingNightVictimId);
+        if (pendingVictim && pendingVictim.alive && pendingVictim.role === "nekomata") {
+          const companionId = resolveNekomataNightCompanion(pendingVictim.id, state.players);
+          if (companionId) {
+            psychoDeathCandidates.add(companionId);
+          }
         }
       }
 
@@ -1284,6 +1376,7 @@
       state.currentVoterIndex = 0;
       state.votesByVoter = {};
       state.lastExecutedByVoteId = null;
+      state.lastVoteAdditionalVictimId = null;
       state.selectedVoteCandidate = null;
       state.voteIdentityConfirmed = false;
       state.voteFinalized = false;
@@ -1328,7 +1421,30 @@
       if (!target || !target.alive) return;
       target.alive = false;
       state.lastExecutedByVoteId = target.id;
-      voteNote.textContent = `${target.name} が処刑されました。`;
+      state.lastVoteAdditionalVictimId = null;
+
+      let voteResultText = `${target.name} が処刑されました。`;
+      if (target.role === "nekomata") {
+        const companionId = resolveNekomataVoteCompanion(target.id, state.players);
+        const companion = findPlayerById(companionId);
+        if (companion && companion.alive) {
+          companion.alive = false;
+          state.lastVoteAdditionalVictimId = companion.id;
+          voteResultText = `${target.name} が処刑されました。${companion.name} が道連れになりました。`;
+        }
+      }
+
+      if (target.role === "blackcat") {
+        const companionId = resolveBlackcatVoteCompanion(target.id, state.players);
+        const companion = findPlayerById(companionId);
+        if (companion && companion.alive) {
+          companion.alive = false;
+          state.lastVoteAdditionalVictimId = companion.id;
+          voteResultText = `${target.name} が処刑されました。${companion.name} が道連れになりました。`;
+        }
+      }
+
+      voteNote.textContent = voteResultText;
       renderAlivePlayers();
       renderVictims();
     }
@@ -1379,12 +1495,14 @@
       state.tieRound = 0;
       state.voteFinalized = true;
       const executed = findPlayerById(state.lastExecutedByVoteId);
-      voteVoterLabel.textContent = executed
-        ? `投票の結果、${executed.name}さんが犠牲者となりました。`
+      const additionalVictim = findPlayerById(state.lastVoteAdditionalVictimId);
+      const voteResultSummary = executed
+        ? additionalVictim
+          ? `投票の結果、${executed.name}さんが犠牲者となりました。追加の犠牲者:${additionalVictim.name}さん`
+          : `投票の結果、${executed.name}さんが犠牲者となりました。`
         : "投票の結果、犠牲者は出ませんでした。";
-      voteNote.textContent = executed
-        ? `投票の結果、${executed.name}さんが犠牲者となりました。`
-        : "投票の結果、犠牲者は出ませんでした。";
+      voteVoterLabel.textContent = voteResultSummary;
+      voteNote.textContent = voteResultSummary;
       
       // 勝利条件をチェック
       if (checkWinnerAndEnd()) {
@@ -1811,9 +1929,10 @@
       const keepNames = Boolean(options.keepNames);
       const keepSettings = Boolean(options.keepSettings);
       const previousNames = keepNames ? [...state.names] : [];
-      const previousTieRule = keepSettings ? state.tieRule : "revote";
-      const previousShowVoteTally = keepSettings ? state.showVoteTally : true;
+      const previousTieRule = keepSettings ? state.tieRule : "random";
+      const previousShowVoteTally = keepSettings ? state.showVoteTally : false;
       const previousFirstDaySeerMode = keepSettings ? state.firstDaySeerMode : "random-white";
+      const previousTestMode = keepSettings ? state.testMode : false;
       const previousKnightConsecutiveGuard = keepSettings ? state.knightConsecutiveGuard : "allowed";
       const previousWolfTargetVisibility = keepSettings ? state.wolfTargetVisibility : "hide";
       
@@ -1847,12 +1966,14 @@
       state.votesByVoter = {};
       state.voteHistory = [];
       state.lastExecutedByVoteId = null;
+      state.lastVoteAdditionalVictimId = null;
       state.currentVoterIndex = 0;
       state.tieCandidates = null;
       state.tieRound = 0;
       state.tieRule = previousTieRule;
       state.showVoteTally = previousShowVoteTally;
       state.firstDaySeerMode = previousFirstDaySeerMode;
+      state.testMode = previousTestMode;
       state.voteFinalized = false;
       state.gameWinner = null;
       state.knightConsecutiveGuard = previousKnightConsecutiveGuard;
@@ -1892,6 +2013,9 @@
       }
       if (setupWolfTargetVisibilitySelect) {
         setupWolfTargetVisibilitySelect.value = previousWolfTargetVisibility;
+      }
+      if (setupTestModeCheckbox) {
+        setupTestModeCheckbox.checked = previousTestMode;
       }
       updatePhaseTimerUI();
       renderPlayersPreview();
@@ -2103,7 +2227,15 @@
       });
     }
 
-    playersCard.addEventListener("click", (event) => {
+    if (setupTestModeCheckbox) {
+      setupTestModeCheckbox.addEventListener("change", () => {
+        state.testMode = setupTestModeCheckbox.checked;
+        renderAlivePlayers();
+        renderVictims();
+      });
+    }
+
+    function handleRoleAdjustInput(event) {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
       const button = target.closest("button[data-role-action][data-role]");
@@ -2111,8 +2243,23 @@
       const role = button.dataset.role;
       const action = button.dataset.roleAction;
       if (!role || !ROLE_DEFINITIONS[role]?.adjustable) return;
+
+      if (event.type === "pointerdown") {
+        event.preventDefault();
+      }
+
+      if (event.type === "click") {
+        const mouseEvent = event;
+        if (mouseEvent instanceof MouseEvent && mouseEvent.detail > 0) {
+          return;
+        }
+      }
+
       adjustRoleCount(role, action === "minus" ? -1 : 1);
-    });
+    }
+
+    playersCard.addEventListener("pointerdown", handleRoleAdjustInput);
+    playersCard.addEventListener("click", handleRoleAdjustInput);
 
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
