@@ -1,0 +1,10 @@
+{
+  "name": "jinro-offline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline Werewolf helper app for smartphone/desktop browser",
+  "scripts": {
+    "test": "node test.js",
+    "serve": "python3 -m http.server 8080"
+  }
+}

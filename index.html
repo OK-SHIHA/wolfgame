@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1221" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="人狼オフライン" />
+    <title>人狼オフライン</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon.jpg" type="image/jpeg" />
+    <link rel="apple-touch-icon" href="./icons/icon.jpg" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>人狼オフライン</h1>
+      </header>
+
+      <section class="card" id="players-card">
+        <h2>1. プレイヤー追加と配役設定</h2>
+        <p class="hint">名前を追加し、同じ画面で配役人数を決めます。</p>
+        <form id="player-form" class="row">
+          <input id="player-name-input" type="text" maxlength="20" placeholder="例: たろう" />
+          <button id="add-player" type="submit">追加</button>
+        </form>
+        <ul id="players-preview"></ul>
+
+        <h3>配役人数</h3>
+        <div class="camp-section">
+          <h4>市民陣営</h4>
+          <div id="role-grid-citizen" class="grid"></div>
+        </div>
+
+        <div class="camp-section">
+          <h4>人狼陣営</h4>
+          <div id="role-grid-wolf" class="grid"></div>
+        </div>
+
+        <h3>投票設定</h3>
+        <div class="row wrap">
+          <label>
+            同票時
+            <select id="setup-tie-rule">
+              <option value="revote">再投票</option>
+              <option value="random">ランダム処刑</option>
+            </select>
+          </label>
+          <label>
+            投票数表示
+            <select id="setup-show-vote-tally">
+              <option value="show">表示する</option>
+              <option value="hide">表示しない</option>
+            </select>
+          </label>
+        </div>
+
+        <h3>占い設定</h3>
+        <div class="row wrap">
+          <label>
+            初日占い
+            <select id="setup-first-day-seer">
+              <option value="random-white">ランダム白</option>
+              <option value="enabled">あり</option>
+              <option value="none">なし</option>
+            </select>
+          </label>
+        </div>
+
+        <h3>騎士設定</h3>
+        <div class="row wrap">
+          <label>
+            連続ガード
+            <select id="setup-knight-consecutive-guard">
+              <option value="allowed">あり</option>
+              <option value="blocked">なし</option>
+            </select>
+          </label>
+        </div>
+
+        <h3>人狼設定</h3>
+        <div class="row wrap">
+          <label>
+            人狼の投票・襲撃先表示
+            <select id="setup-wolf-target-visibility">
+              <option value="hide">見えない</option>
+              <option value="show">見える</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row">
+          <button id="decide-roles" type="button" disabled>配役を確定</button>
+          <button id="clear-players" type="button" class="ghost">全員クリア</button>
+        </div>
+        <p id="players-error" class="error" aria-live="polite"></p>
+        <p id="role-setup-summary" class="hint"></p>
+      </section>
+
+      <section class="card hidden" id="reveal-card">
+        <h2>2. 順番に役職を見る</h2>
+        <p id="reveal-progress"></p>
+        <div class="reveal-panel">
+          <p id="reveal-message"></p>
+          <h3 id="role-name" class="hidden"></h3>
+          <p id="role-description" class="role-description hidden"></p>
+          <p id="reveal-wolf-mates" class="wolf-mates hidden"></p>
+        </div>
+        <div id="reveal-action-buttons" class="row wrap"></div>
+        <div class="row">
+          <button id="show-role" type="button">役職を見る</button>
+          <button id="next-player" type="button" disabled>確認して次へ</button>
+        </div>
+      </section>
+
+      <section class="card hidden" id="game-card">
+        <h2>3. ゲーム進行</h2>
+
+        <div class="status-row">
+          <span id="round-badge" class="badge"></span>
+          <span id="phase-badge" class="badge"></span>
+        </div>
+        <p id="game-status" class="hint"></p>
+
+        <h3>共通タイマー</h3>
+        <div class="row wrap timer-row">
+          <button id="decrease-phase-seconds" type="button" class="mini ghost">−10秒</button>
+          <button id="increase-phase-seconds" type="button" class="mini">＋10秒</button>
+          <div class="timer-action-group">
+            <button id="start-phase-timer" type="button">開始</button>
+            <button id="pause-phase-timer" type="button">停止</button>
+          </div>
+          <strong id="phase-timer-display">03:00</strong>
+        </div>
+
+        <section id="night-section" class="phase-block hidden">
+          <h3>夜フェーズ</h3>
+          <p id="night-question"></p>
+          <p id="night-guide" class="hint"></p>
+          <div id="night-action-buttons" class="row wrap"></div>
+          <p id="night-action-result" class="hint"></p>
+          <div class="row wrap">
+            <button id="night-action-start" type="button">この人の夜アクション開始</button>
+            <button id="night-action-done" type="button" disabled>夜アクション完了</button>
+          </div>
+          <button id="confirm-night-action" type="button" class="hidden">夜フェーズを確定して朝へ</button>
+        </section>
+
+        <section id="night-zero-section" class="phase-block hidden">
+          <h3>0日目夜（アクション）</h3>
+          <p id="night-zero-question"></p>
+          <p id="night-zero-guide" class="hint"></p>
+          <div id="night-zero-action-buttons" class="row wrap"></div>
+          <div id="night-zero-seer-result-container" class="night-zero-seer-result-box hidden">
+            <span id="night-zero-seer-result"></span>
+          </div>
+          <div class="row wrap">
+            <button id="night-zero-start" type="button">この人のアクション開始</button>
+            <button id="night-zero-done" type="button" disabled>アクション完了</button>
+          </div>
+        </section>
+
+        <section id="day-section" class="phase-block hidden">
+          <h3>朝フェーズ</h3>
+          <p id="day-announcement"></p>
+          <p class="hint">議論後に投票フェーズへ進んでください。</p>
+          <button id="to-vote-phase" type="button">投票フェーズへ進む</button>
+        </section>
+
+        <section id="vote-section" class="phase-block hidden">
+          <h3>投票フェーズ</h3>
+          <p id="vote-role-hint" class="wolf-mates hidden"></p>
+          <p id="vote-voter-label"></p>
+          <p id="vote-progress" class="hint"></p>
+          <div id="vote-candidate-buttons" class="row wrap"></div>
+          <ul id="vote-tally"></ul>
+          <p id="vote-note" class="hint"></p>
+          <button id="start-night-after-vote" type="button" class="hidden">夜のアクションを開始</button>
+        </section>
+
+        <section id="end-section" class="phase-block hidden">
+          <h3 id="end-title" class="winner">ゲーム終了</h3>
+          <p id="winner-text" class="hint"></p>
+          <div id="end-details"></div>
+        </section>
+
+        <h3>生存者</h3>
+        <ul id="alive-player-list"></ul>
+
+        <h3>犠牲者</h3>
+        <ul id="victims-list"></ul>
+
+        <button id="restart" type="button" class="ghost">最初からやり直す</button>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+  </html>
