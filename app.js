@@ -150,10 +150,56 @@
     ROLE_ORDER.map((role) => [role, ROLE_DEFINITIONS[role].revealDescription]),
   );
 
+  const TEST_MODE_SAMPLE_NAMES = ["一郎", "二郎", "三郎", "四郎", "五郎", "六郎", "七郎"];
+
+  const WOLF_CONVERSATION_ACTION_CHOICES = ["に投票する", "を襲撃する", "を殺さない"];
+  const WOLF_CONVERSATION_DECISION_CHOICES = ["YES", "NO", "任せる"];
+
   function createDefaultRoleCounts() {
     return Object.fromEntries(
       ROLE_ORDER.map((role) => [role, ROLE_DEFINITIONS[role].defaultCount]),
     );
+  }
+
+  function normalizeWolfConversationAction(action) {
+    const normalized = String(action || "").trim();
+    return WOLF_CONVERSATION_ACTION_CHOICES.includes(normalized) ? normalized : "";
+  }
+
+  function normalizeWolfConversationDecision(decision) {
+    const normalized = String(decision || "").trim().toUpperCase();
+    if (normalized === "YES") return "YES";
+    if (normalized === "NO") return "NO";
+    if (normalized === "任せる") return "任せる";
+    return "";
+  }
+
+  function normalizeWolfConversationTargetName(targetName, participantNames) {
+    const normalized = String(targetName || "").trim();
+    const names = (participantNames || []).map((name) => String(name || ""));
+    return names.includes(normalized) ? normalized : "";
+  }
+
+  function createWolfConversationMessage(authorName, targetName, action, decision, participantNames = []) {
+    const normalizedTargetName = normalizeWolfConversationTargetName(targetName, participantNames);
+    const normalizedAction = normalizeWolfConversationAction(action);
+    const normalizedDecision = normalizeWolfConversationDecision(decision);
+    if (!normalizedTargetName && !normalizedAction && !normalizedDecision) {
+      return null;
+    }
+    return {
+      authorName: String(authorName || ""),
+      targetName: normalizedTargetName,
+      action: normalizedAction,
+      decision: normalizedDecision,
+    };
+  }
+
+  function appendWolfConversationMessage(logEntries, entry) {
+    if (!entry) {
+      return [...(logEntries || [])];
+    }
+    return [...(logEntries || []), entry];
   }
 
   function clampNumber(value, min, max) {
@@ -335,6 +381,11 @@
 
   const app = {
     normalizePlayerName,
+    normalizeWolfConversationAction,
+    normalizeWolfConversationDecision,
+    normalizeWolfConversationTargetName,
+    createWolfConversationMessage,
+    appendWolfConversationMessage,
     validateRoleCounts,
     createRoleDeck,
     shuffle,
@@ -398,7 +449,14 @@
       voteFinalized: false,
       gameWinner: null,
       knightConsecutiveGuard: "allowed",
+      wolfConversation: "off",
       wolfTargetVisibility: "hide",
+      voteWolfMessages: [],
+      voteWolfMessageCommittedByPlayer: {},
+      nightWolfMessageCommittedByPlayer: {},
+      selectedWolfConversationTargetName: "",
+      selectedWolfConversationAction: "",
+      selectedWolfConversationDecision: "",
       phaseTimerSeconds: 120,
       phaseTimerLeft: 120,
       phaseTimerId: null,
@@ -439,6 +497,7 @@
     const dayAnnouncement = document.getElementById("day-announcement");
     const voteVoterLabel = document.getElementById("vote-voter-label");
     const voteRoleHint = document.getElementById("vote-role-hint");
+    const voteWolfMessageLog = document.getElementById("vote-wolf-message-log");
     const voteCandidateButtons = document.getElementById("vote-candidate-buttons");
     const voteProgress = document.getElementById("vote-progress");
     const voteTally = document.getElementById("vote-tally");
@@ -517,38 +576,52 @@
         .filter((player) => player.role === "wolf")
         .filter((player) => !isTrueWolfRole(role) || player.id !== viewerId)
         .map((player) => player.name);
-      const wolvesText = wolves.length > 0 ? wolves.join("、") : "なし";
-
       const ableWolves = state.players
         .filter((player) => player.role === "ablewolf")
         .filter((player) => !isTrueWolfRole(role) || player.id !== viewerId)
         .map((player) => player.name);
-      const ableWolvesText = ableWolves.length > 0 ? ableWolves.join("、") : "なし";
       const hasOtherAbleWolves = ableWolves.length > 0;
 
-      const allTrueWolvesText = [...wolves, ...ableWolves].join("、") || "なし";
+      const allTrueWolves = [...wolves, ...ableWolves];
       
       const whisperingMadmen = state.players.filter((player) => player.role === "whisperingmadman");
       const hasWhisperingMadman = whisperingMadmen.length > 0;
+      const visibleWhisperingMadmen = whisperingMadmen
+        .filter((player) => role !== "whisperingmadman" || player.id !== viewerId)
+        .map((player) => player.name);
+      const lines = [];
 
       if (role === "wolf" || role === "ablewolf") {
-        const lines = [];
         if (wolves.length > 0) {
-          lines.push(`人狼: ${wolvesText}`);
+          lines.push(`人狼: ${wolves.join("、")}`);
         }
         if (hasOtherAbleWolves) {
-          lines.push(`能ある人狼: ${ableWolvesText}`);
+          lines.push(`能ある人狼: ${ableWolves.join("、")}`);
         }
         if (hasWhisperingMadman) {
           const whisperingText = whisperingMadmen.map((player) => player.name).join("、");
           lines.push(`ささやく狂人: ${whisperingText}`);
         }
-        targetElement.textContent = lines.join("\n");
       } else if (role === "fanatic") {
-        targetElement.textContent = `人狼: ${allTrueWolvesText}`;
+        if (allTrueWolves.length > 0) {
+          lines.push(`人狼: ${allTrueWolves.join("、")}`);
+        }
       } else if (role === "whisperingmadman") {
-        targetElement.textContent = `人狼: ${allTrueWolvesText}`;
+        if (allTrueWolves.length > 0) {
+          lines.push(`人狼: ${allTrueWolves.join("、")}`);
+        }
+        if (visibleWhisperingMadmen.length > 0) {
+          lines.push(`ささやく狂人: ${visibleWhisperingMadmen.join("、")}`);
+        }
       }
+
+      if (lines.length === 0) {
+        targetElement.textContent = "";
+        targetElement.classList.add("hidden");
+        return;
+      }
+
+      targetElement.textContent = lines.join("\n");
       targetElement.classList.remove("hidden");
     }
     const decideRolesButton = document.getElementById("decide-roles");
@@ -559,6 +632,7 @@
     const setupShowVoteTallySelect = document.getElementById("setup-show-vote-tally");
     const setupFirstDaySeerSelect = document.getElementById("setup-first-day-seer");
     const setupKnightConsecutiveGuardSelect = document.getElementById("setup-knight-consecutive-guard");
+    const setupWolfConversationSelect = document.getElementById("setup-wolf-conversation");
     const setupWolfTargetVisibilitySelect = document.getElementById("setup-wolf-target-visibility");
     const setupTestModeCheckbox = document.getElementById("setup-test-mode");
     const timerHeading = document.getElementById("timer-heading");
@@ -583,6 +657,137 @@
         .filter(Boolean);
       if (rows.length === 0) return "なし";
       return rows.join("、");
+    }
+
+    function isWolfConversationRole(role) {
+      return role === "wolf" || role === "ablewolf" || role === "whisperingmadman";
+    }
+
+    function getWolfConversationMessagesText() {
+      if (!state.voteWolfMessages || state.voteWolfMessages.length === 0) {
+        return "なし";
+      }
+      return state.voteWolfMessages
+        .map((entry, index) => {
+          const targetText = entry.targetName || "";
+          const actionText = entry.action || "";
+          const decisionText = entry.decision || "";
+          return `${index + 1}. ${entry.authorName}: ${targetText}${actionText} ${decisionText}`;
+        })
+        .join("\n");
+    }
+
+    function resetWolfConversationSelections() {
+      state.selectedWolfConversationTargetName = "";
+      state.selectedWolfConversationAction = "";
+      state.selectedWolfConversationDecision = "";
+    }
+
+    function buildSelectWithNone(options, selectedValue, onChange) {
+      const select = document.createElement("select");
+
+      const noneOption = document.createElement("option");
+      noneOption.value = "";
+      noneOption.textContent = "";
+      select.appendChild(noneOption);
+
+      options.forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+      });
+
+      select.value = selectedValue || "";
+      select.addEventListener("change", () => {
+        onChange(select.value);
+      });
+
+      return select;
+    }
+
+    function renderWolfConversationComposer(container, actorName, onSaved) {
+      const participantNames = state.players.map((player) => player.name);
+
+      if (!normalizeWolfConversationTargetName(state.selectedWolfConversationTargetName, participantNames)) {
+        state.selectedWolfConversationTargetName = "";
+      }
+      if (!normalizeWolfConversationAction(state.selectedWolfConversationAction)) {
+        state.selectedWolfConversationAction = "";
+      }
+      if (!normalizeWolfConversationDecision(state.selectedWolfConversationDecision)) {
+        state.selectedWolfConversationDecision = "";
+      }
+
+      const title = document.createElement("p");
+      title.className = "hint message-title-inline";
+      title.textContent = "メッセージ";
+      container.appendChild(title);
+
+      const composerRow = document.createElement("div");
+      composerRow.className = "row wrap wolf-message-composer";
+
+      const targetSelect = buildSelectWithNone(
+        participantNames,
+        state.selectedWolfConversationTargetName,
+        (value) => {
+          state.selectedWolfConversationTargetName = value;
+          onSaved();
+        },
+      );
+      composerRow.appendChild(targetSelect);
+
+      const actionSelect = buildSelectWithNone(
+        WOLF_CONVERSATION_ACTION_CHOICES,
+        state.selectedWolfConversationAction,
+        (value) => {
+          state.selectedWolfConversationAction = value;
+          onSaved();
+        },
+      );
+      composerRow.appendChild(actionSelect);
+
+      const decisionSelect = buildSelectWithNone(
+        WOLF_CONVERSATION_DECISION_CHOICES,
+        state.selectedWolfConversationDecision,
+        (value) => {
+          state.selectedWolfConversationDecision = value;
+          onSaved();
+        },
+      );
+      composerRow.appendChild(decisionSelect);
+
+      container.appendChild(composerRow);
+    }
+
+    function commitWolfConversationMessageForActor(actor, phase) {
+      if (!actor || !isWolfConversationRole(actor.role)) return;
+      if (state.wolfConversation !== "on") return;
+
+      const committedMap = phase === "night"
+        ? state.nightWolfMessageCommittedByPlayer
+        : state.voteWolfMessageCommittedByPlayer;
+      if (committedMap[actor.id]) return;
+
+      const entry = createWolfConversationMessage(
+        actor.name,
+        state.selectedWolfConversationTargetName,
+        state.selectedWolfConversationAction,
+        state.selectedWolfConversationDecision,
+        state.players.map((player) => player.name),
+      );
+      if (!entry) {
+        resetWolfConversationSelections();
+        return;
+      }
+
+      state.voteWolfMessages = appendWolfConversationMessage(state.voteWolfMessages, {
+        ...entry,
+        phase,
+        authorId: actor.id,
+      });
+      committedMap[actor.id] = true;
+      resetWolfConversationSelections();
     }
 
     function createCounterBox(role) {
@@ -1220,6 +1425,10 @@
     function renderNightActionForActor(actor) {
       nightActionButtons.innerHTML = "";
       nightActionDoneButton.disabled = !state.nightActionDoneByActor[actor.id];
+      const canSeeWolfConversation = state.wolfConversation === "on" && isWolfConversationRole(actor.role);
+      const wolfConversationText = canSeeWolfConversation
+        ? `メッセージログ:\n${getWolfConversationMessagesText()}`
+        : "";
 
       if (state.nightActionDoneByActor[actor.id]) {
         nightGuide.textContent = "アクションは確定済みです。「夜アクション完了」で次へ進んでください。";
@@ -1233,8 +1442,27 @@
           nightGuide.textContent = `人狼: ${wolvesText}。ダミーアクションを実行してください。`;
         }
         if (actor.role === "whisperingmadman") {
-          const wolvesText = getWolfNames().join("、") || "なし";
-          nightGuide.textContent = `人狼: ${wolvesText}。ダミーアクションを実行してください。`;
+          const wolves = getWolfNames();
+          const otherWhispering = state.players
+            .filter((player) => player.role === "whisperingmadman" && player.id !== actor.id)
+            .map((player) => player.name);
+          const lines = [];
+          if (wolves.length > 0) {
+            lines.push(`人狼: ${wolves.join("、")}`);
+          }
+          if (otherWhispering.length > 0) {
+            lines.push(`ささやく狂人: ${otherWhispering.join("、")}`);
+          }
+          lines.push("ダミーアクションを実行してください。");
+          nightGuide.textContent = lines.join("\n");
+          if (wolfConversationText) {
+            nightGuide.textContent = `${nightGuide.textContent}\n${wolfConversationText}`;
+          }
+        }
+        if (canSeeWolfConversation) {
+          renderWolfConversationComposer(nightActionButtons, actor.name, () => {
+            renderNightStep();
+          });
         }
         const dummyButton = document.createElement("button");
         dummyButton.type = "button";
@@ -1288,6 +1516,9 @@
         if (state.wolfTargetVisibility === "show") {
           const otherTargetsText = getOtherWolvesTargetText(state.nightActions.wolfVotesByVoter, actor.id);
           nightGuide.textContent = `襲撃対象を選んでください。\n他の人狼の襲撃先: ${otherTargetsText}`;
+        }
+        if (wolfConversationText) {
+          nightGuide.textContent = `${nightGuide.textContent}\n${wolfConversationText}`;
         }
       }
       if (isDivinationRole(actor.role)) {
@@ -1358,6 +1589,12 @@
           selectNightNoAttack(actor);
         });
         nightActionButtons.appendChild(noAttackButton);
+      }
+
+      if (canSeeWolfConversation) {
+        renderWolfConversationComposer(nightActionButtons, actor.name, () => {
+          renderNightStep();
+        });
       }
     }
 
@@ -1489,6 +1726,8 @@
     function startNightPhase() {
       resetNightActions();
       state.dayAnnouncement = "";
+      state.nightWolfMessageCommittedByPlayer = {};
+      resetWolfConversationSelections();
       setGamePhase("night");
       renderNightStep();
       updateGameStatus("夜アクションをプレイヤーごとに順番で実行してください。");
@@ -1501,6 +1740,10 @@
       } else {
         applyNightResult();
       }
+      state.voteWolfMessages = [];
+      state.voteWolfMessageCommittedByPlayer = {};
+      state.nightWolfMessageCommittedByPlayer = {};
+      resetWolfConversationSelections();
       const bakerAlive = state.players.some((player) => player.alive && player.role === "baker");
       if (bakerAlive) {
         state.dayAnnouncement = state.dayAnnouncement
@@ -1530,6 +1773,11 @@
     function startVotePhase(candidatePool = null) {
       state.currentVoterIndex = 0;
       state.votesByVoter = {};
+      state.voteWolfMessages = [];
+      state.voteWolfMessageCommittedByPlayer = {};
+      state.selectedWolfConversationTargetName = "";
+      state.selectedWolfConversationAction = "";
+      state.selectedWolfConversationDecision = "";
       state.lastExecutedByVoteId = null;
       state.lastVoteAdditionalVictimId = null;
       state.selectedVoteCandidate = null;
@@ -1679,6 +1927,10 @@
       voteCandidateButtons.innerHTML = "";
       voteRoleHint.textContent = "";
       voteRoleHint.classList.add("hidden");
+      if (voteWolfMessageLog) {
+        voteWolfMessageLog.textContent = "";
+        voteWolfMessageLog.classList.add("hidden");
+      }
 
       if (state.currentVoterIndex >= voters.length) {
         voteVoterLabel.textContent = "集計中...";
@@ -1689,6 +1941,7 @@
       }
 
       const voter = voters[state.currentVoterIndex];
+      const canUseWolfConversation = state.wolfConversation === "on" && isWolfConversationRole(voter.role);
       const candidates = getVoteCandidatesForVoter(voter);
       voteVoterLabel.textContent = `${voter.name} さんの投票`;
       voteProgress.textContent = `${state.currentVoterIndex + 1} / ${voters.length}`;
@@ -1726,9 +1979,18 @@
         voteRoleHint.classList.remove("hidden");
       }
 
+      if (canUseWolfConversation && voteWolfMessageLog) {
+        voteWolfMessageLog.textContent = `メッセージ\n${getWolfConversationMessagesText()}`;
+        voteWolfMessageLog.classList.remove("hidden");
+        renderWolfConversationComposer(voteCandidateButtons, voter.name, () => {
+          renderVoteStep();
+        });
+      }
+
       if (candidates.length === 0) {
         state.currentVoterIndex += 1;
         state.voteIdentityConfirmed = false;
+        resetWolfConversationSelections();
         renderVoteStep();
         return;
       }
@@ -1742,6 +2004,10 @@
         ? `${selected.name} さんを選択中です。`
         : "投票対象を選んでください。";
 
+      const voteActionBlock = document.createElement("div");
+      voteActionBlock.className = "row wrap vote-action-block";
+      voteCandidateButtons.appendChild(voteActionBlock);
+
       candidates.forEach((candidate) => {
         const button = document.createElement("button");
         button.type = "button";
@@ -1753,7 +2019,7 @@
           state.selectedVoteCandidate = candidate.id;
           renderVoteStep();
         });
-        voteCandidateButtons.appendChild(button);
+        voteActionBlock.appendChild(button);
       });
 
       const confirmButton = document.createElement("button");
@@ -1762,13 +2028,15 @@
       confirmButton.disabled = !state.selectedVoteCandidate;
       confirmButton.addEventListener("click", () => {
         if (!state.selectedVoteCandidate) return;
+        commitWolfConversationMessageForActor(voter, "vote");
         state.votesByVoter[voter.id] = state.selectedVoteCandidate;
         state.selectedVoteCandidate = null;
+        resetWolfConversationSelections();
         state.voteIdentityConfirmed = false;
         state.currentVoterIndex += 1;
         renderVoteStep();
       });
-      voteCandidateButtons.appendChild(confirmButton);
+      voteActionBlock.appendChild(confirmButton);
 
       if (state.selectedVoteCandidate) {
         const cancelButton = document.createElement("button");
@@ -1779,7 +2047,7 @@
           state.selectedVoteCandidate = null;
           renderVoteStep();
         });
-        voteCandidateButtons.appendChild(cancelButton);
+        voteActionBlock.appendChild(cancelButton);
       }
     }
 
@@ -2090,6 +2358,7 @@
       const previousFirstDaySeerMode = keepSettings ? state.firstDaySeerMode : "random-white";
       const previousTestMode = keepSettings ? state.testMode : false;
       const previousKnightConsecutiveGuard = keepSettings ? state.knightConsecutiveGuard : "allowed";
+      const previousWolfConversation = keepSettings ? state.wolfConversation : "off";
       const previousWolfTargetVisibility = keepSettings ? state.wolfTargetVisibility : "hide";
       
       stopPhaseTimer();
@@ -2135,7 +2404,14 @@
       state.voteFinalized = false;
       state.gameWinner = null;
       state.knightConsecutiveGuard = previousKnightConsecutiveGuard;
+      state.wolfConversation = previousWolfConversation;
       state.wolfTargetVisibility = previousWolfTargetVisibility;
+      state.voteWolfMessages = [];
+      state.voteWolfMessageCommittedByPlayer = {};
+      state.nightWolfMessageCommittedByPlayer = {};
+      state.selectedWolfConversationTargetName = "";
+      state.selectedWolfConversationAction = "";
+      state.selectedWolfConversationDecision = "";
       state.phaseTimerSeconds = 120;
       state.phaseTimerLeft = 120;
       playersError.textContent = "";
@@ -2164,10 +2440,17 @@
       nightActionResult.innerHTML = "";
       nightGuide.textContent = "";
       nightQuestion.textContent = "";
+      if (voteWolfMessageLog) {
+        voteWolfMessageLog.textContent = "";
+        voteWolfMessageLog.classList.add("hidden");
+      }
       confirmNightActionButton.classList.add("hidden");
       startNightAfterVoteButton.classList.add("hidden");
       if (setupKnightConsecutiveGuardSelect) {
         setupKnightConsecutiveGuardSelect.value = previousKnightConsecutiveGuard;
+      }
+      if (setupWolfConversationSelect) {
+        setupWolfConversationSelect.value = previousWolfConversation;
       }
       if (setupWolfTargetVisibilitySelect) {
         setupWolfTargetVisibilitySelect.value = previousWolfTargetVisibility;
@@ -2208,6 +2491,20 @@
       playerNameInput.value = "";
       playerNameInput.focus();
       renderPlayersPreview();
+    }
+
+    function addTestModeSamplePlayers() {
+      let didAdd = false;
+      for (const sampleName of TEST_MODE_SAMPLE_NAMES) {
+        if (state.names.length >= 30) break;
+        if (state.names.includes(sampleName)) continue;
+        state.names.push(sampleName);
+        didAdd = true;
+      }
+      if (!didAdd) return;
+      playersError.textContent = "";
+      renderPlayersPreview();
+      renderRoleCounters();
     }
 
     playerForm.addEventListener("submit", (event) => {
@@ -2312,6 +2609,9 @@
     });
 
     nightActionDoneButton.addEventListener("click", () => {
+      const actors = getAlivePlayers();
+      const currentActor = actors[state.currentNightActorIndex] || null;
+      commitWolfConversationMessageForActor(currentActor, "night");
       state.currentNightActorIndex += 1;
       state.nightActionStarted = false;
       state.nightActionSelection = null;
@@ -2385,6 +2685,12 @@
       });
     }
 
+    if (setupWolfConversationSelect) {
+      setupWolfConversationSelect.addEventListener("change", () => {
+        state.wolfConversation = setupWolfConversationSelect.value === "on" ? "on" : "off";
+      });
+    }
+
     if (setupWolfTargetVisibilitySelect) {
       setupWolfTargetVisibilitySelect.addEventListener("change", () => {
         state.wolfTargetVisibility = setupWolfTargetVisibilitySelect.value === "show" ? "show" : "hide";
@@ -2394,6 +2700,9 @@
     if (setupTestModeCheckbox) {
       setupTestModeCheckbox.addEventListener("change", () => {
         state.testMode = setupTestModeCheckbox.checked;
+        if (state.testMode) {
+          addTestModeSamplePlayers();
+        }
         renderAlivePlayers();
         renderVictims();
       });

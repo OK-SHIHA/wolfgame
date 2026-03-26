@@ -153,6 +153,16 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.message-title-inline,
+.wolf-message-composer,
+.vote-action-block {
+  flex: 1 0 100%;
+}
+
+.vote-action-block {
+  margin-top: 10px;
+}
+
 .status-row {
   display: flex;
   gap: 8px;

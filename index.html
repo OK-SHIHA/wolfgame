@@ -82,6 +82,13 @@
         <h3>人狼設定</h3>
         <div class="row wrap">
           <label>
+            人狼同士の会話
+            <select id="setup-wolf-conversation">
+              <option value="off">なし</option>
+              <option value="on">あり</option>
+            </select>
+          </label>
+          <label>
             人狼の投票・襲撃先表示
             <select id="setup-wolf-target-visibility">
               <option value="hide">見えない</option>
@@ -179,6 +186,7 @@
         <section id="vote-section" class="phase-block hidden">
           <h3>投票フェーズ</h3>
           <p id="vote-role-hint" class="wolf-mates hidden"></p>
+          <p id="vote-wolf-message-log" class="hint hidden"></p>
           <p id="vote-voter-label"></p>
           <p id="vote-progress" class="hint"></p>
           <div id="vote-candidate-buttons" class="row wrap"></div>

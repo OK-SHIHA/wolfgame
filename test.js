@@ -4,6 +4,54 @@ const app = require("./app.js");
 function run() {
   assert.equal(app.normalizePlayerName("  たろう  "), "たろう");
   assert.equal(app.normalizePlayerName(""), "");
+  assert.equal(app.normalizeWolfConversationAction("に投票する"), "に投票する");
+  assert.equal(app.normalizeWolfConversationAction("を襲撃する"), "を襲撃する");
+  assert.equal(app.normalizeWolfConversationAction("x"), "");
+  assert.equal(app.normalizeWolfConversationDecision("yes"), "YES");
+  assert.equal(app.normalizeWolfConversationDecision("任せる"), "任せる");
+  assert.equal(app.normalizeWolfConversationDecision("maybe"), "");
+  assert.equal(
+    app.normalizeWolfConversationTargetName("太郎", ["太郎", "花子"]),
+    "太郎",
+  );
+  assert.equal(
+    app.normalizeWolfConversationTargetName("次郎", ["太郎", "花子"]),
+    "",
+  );
+
+  const wolfConversationMessage = app.createWolfConversationMessage(
+    "狼A",
+    "太郎",
+    "を襲撃する",
+    "no",
+    ["太郎", "花子"],
+  );
+  assert.deepEqual(wolfConversationMessage, {
+    authorName: "狼A",
+    targetName: "太郎",
+    action: "を襲撃する",
+    decision: "NO",
+  });
+  const wolfConversationLog = app.appendWolfConversationMessage([], wolfConversationMessage);
+  assert.deepEqual(wolfConversationLog, [wolfConversationMessage]);
+  const partialMessageWithUnknownTarget = app.createWolfConversationMessage("狼B", "次郎", "を襲撃する", "YES", ["太郎", "花子"]);
+  assert.deepEqual(partialMessageWithUnknownTarget, {
+    authorName: "狼B",
+    targetName: "",
+    action: "を襲撃する",
+    decision: "YES",
+  });
+  const emptySelectionMessage = app.createWolfConversationMessage("狼C", "", "", "", ["太郎", "花子"]);
+  assert.equal(emptySelectionMessage, null);
+  const oneSelectionMessage = app.createWolfConversationMessage("狼D", "", "に投票する", "", ["太郎", "花子"]);
+  assert.deepEqual(oneSelectionMessage, {
+    authorName: "狼D",
+    targetName: "",
+    action: "に投票する",
+    decision: "",
+  });
+  const unchangedLog = app.appendWolfConversationMessage(wolfConversationLog, null);
+  assert.deepEqual(unchangedLog, wolfConversationLog);
 
   const valid = app.validateRoleCounts(6, {
     wolf: 1,
