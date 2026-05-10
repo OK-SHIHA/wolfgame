@@ -2,7 +2,7 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0f1221" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -15,7 +15,7 @@
   </head>
   <body>
     <main class="container">
-      <header>
+      <header id="app-title">
         <h1>人狼オフライン</h1>
       </header>
 
@@ -84,15 +84,15 @@
           <label>
             人狼同士の会話
             <select id="setup-wolf-conversation">
-              <option value="off">なし</option>
               <option value="on">あり</option>
+              <option value="off">なし</option>
             </select>
           </label>
           <label>
             人狼の投票・襲撃先表示
             <select id="setup-wolf-target-visibility">
-              <option value="hide">見えない</option>
               <option value="show">見える</option>
+              <option value="hide">見えない</option>
             </select>
           </label>
         </div>
@@ -130,14 +130,6 @@
       </section>
 
       <section class="card hidden" id="game-card">
-        <h2>3. ゲーム進行</h2>
-
-        <div class="status-row">
-          <span id="round-badge" class="badge"></span>
-          <span id="phase-badge" class="badge"></span>
-        </div>
-        <p id="game-status" class="hint"></p>
-
         <h3 id="timer-heading">共通タイマー</h3>
         <div class="row wrap timer-row">
           <button id="decrease-phase-seconds" type="button" class="mini ghost">−10秒</button>
@@ -149,8 +141,14 @@
           <strong id="phase-timer-display">03:00</strong>
         </div>
 
+        <div class="status-row">
+          <span id="round-badge" class="badge"></span>
+          <span id="phase-badge" class="badge"></span>
+        </div>
+        <p id="game-status" class="hint"></p>
+
         <section id="night-section" class="phase-block hidden">
-          <h3>夜フェーズ</h3>
+          <h3>夜</h3>
           <p id="night-question"></p>
           <p id="night-guide" class="hint"></p>
           <div id="night-action-buttons" class="row wrap"></div>
@@ -159,11 +157,11 @@
             <button id="night-action-start" type="button">この人の夜アクション開始</button>
             <button id="night-action-done" type="button" disabled>夜アクション完了</button>
           </div>
-          <button id="confirm-night-action" type="button" class="hidden">夜フェーズを確定して朝へ</button>
+          <button id="confirm-night-action" type="button" class="hidden">朝へ</button>
         </section>
 
         <section id="night-zero-section" class="phase-block hidden">
-          <h3>1日目夜（アクション）</h3>
+          <h3>初日夜</h3>
           <p id="night-zero-question"></p>
           <p id="night-zero-guide" class="hint"></p>
           <div id="night-zero-action-buttons" class="row wrap"></div>
@@ -177,19 +175,20 @@
         </section>
 
         <section id="day-section" class="phase-block hidden">
-          <h3>朝フェーズ</h3>
+          <h3>朝</h3>
           <p id="day-announcement"></p>
-          <p class="hint">議論後に投票フェーズへ進んでください。</p>
-          <button id="to-vote-phase" type="button">投票フェーズへ進む</button>
+          <p class="hint">議論後に投票へ進んでください。</p>
+          <button id="to-vote-phase" type="button">投票へ進む</button>
         </section>
 
         <section id="vote-section" class="phase-block hidden">
-          <h3>投票フェーズ</h3>
+          <h3>投票</h3>
           <p id="vote-role-hint" class="wolf-mates hidden"></p>
           <p id="vote-wolf-message-log" class="hint hidden"></p>
           <p id="vote-voter-label"></p>
           <p id="vote-progress" class="hint"></p>
           <div id="vote-candidate-buttons" class="row wrap"></div>
+          <div id="vote-confirm-popup" class="vote-confirm-popup hidden" role="dialog" aria-live="polite"></div>
           <ul id="vote-tally"></ul>
           <p id="vote-note" class="hint"></p>
           <button id="start-night-after-vote" type="button" class="hidden">夜のアクションを開始</button>
@@ -201,11 +200,15 @@
           <div id="end-details"></div>
         </section>
 
-        <h3>生存者</h3>
-        <ul id="alive-player-list"></ul>
+        <details class="collapsible-list">
+          <summary>生存者</summary>
+          <ul id="alive-player-list"></ul>
+        </details>
 
-        <h3>犠牲者</h3>
-        <ul id="victims-list"></ul>
+        <details class="collapsible-list">
+          <summary>犠牲者</summary>
+          <ul id="victims-list"></ul>
+        </details>
 
         <button id="restart" type="button" class="ghost">最初からやり直す</button>
       </section>

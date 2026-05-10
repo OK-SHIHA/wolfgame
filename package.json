@@ -5,6 +5,7 @@
   "description": "Offline Werewolf helper app for smartphone/desktop browser",
   "scripts": {
     "test": "node test.js",
-    "serve": "python3 -m http.server 8080"
+    "serve": "python3 -m http.server 8080",
+    "serve:lan": "node server.js"
   }
 }

@@ -4,7 +4,7 @@
       label: "人狼",
       camp: "wolf",
       adjustable: true,
-      defaultCount: 1,
+      defaultCount: 0,
       setupHelp: "夜に襲撃対象を選ぶ。仲間の人狼がわかる。",
       revealDescription: "人狼陣営。夜に襲撃対象を選びます。占い・霊媒では黒判定です。",
     },
@@ -449,8 +449,8 @@
       voteFinalized: false,
       gameWinner: null,
       knightConsecutiveGuard: "allowed",
-      wolfConversation: "off",
-      wolfTargetVisibility: "hide",
+      wolfConversation: "on",
+      wolfTargetVisibility: "show",
       voteWolfMessages: [],
       voteWolfMessageCommittedByPlayer: {},
       nightWolfMessageCommittedByPlayer: {},
@@ -468,6 +468,7 @@
     const playersCard = document.getElementById("players-card");
     const revealCard = document.getElementById("reveal-card");
     const gameCard = document.getElementById("game-card");
+    const appTitle = document.getElementById("app-title");
     const playersPreview = document.getElementById("players-preview");
     const finalPlayerList = document.getElementById("final-player-list"); // 現在は非表示
     const playersError = document.getElementById("players-error");
@@ -499,6 +500,7 @@
     const voteRoleHint = document.getElementById("vote-role-hint");
     const voteWolfMessageLog = document.getElementById("vote-wolf-message-log");
     const voteCandidateButtons = document.getElementById("vote-candidate-buttons");
+    const voteConfirmPopup = document.getElementById("vote-confirm-popup");
     const voteProgress = document.getElementById("vote-progress");
     const voteTally = document.getElementById("vote-tally");
     const voteNote = document.getElementById("vote-note");
@@ -520,6 +522,10 @@
     const wolfRoleGrid = document.getElementById("role-grid-wolf");
     const roleCountViews = {};
     const roleAdjustButtonViews = {};
+
+    // NOTE: `markGameActionButton` must be called after the related
+    // button variables are declared below. The explicit call was moved
+    // to follow the element lookups to avoid TDZ/ReferenceError on load.
 
     function getWolfNames() {
       return state.players
@@ -637,6 +643,20 @@
     const setupTestModeCheckbox = document.getElementById("setup-test-mode");
     const timerHeading = document.getElementById("timer-heading");
     const timerRow = document.querySelector(".timer-row");
+
+    // Tag core progression/action buttons after they are looked up
+    [
+      decideRolesButton,
+      nightActionStartButton,
+      nightActionDoneButton,
+      confirmNightActionButton,
+      nightZeroStartButton,
+      nightZeroDoneButton,
+      toVotePhaseButton,
+      startNightAfterVoteButton,
+      showRoleButton,
+      nextPlayerButton,
+    ].forEach(markGameActionButton);
 
     function getOtherWolvesTargetText(sourceMap, viewerId) {
       const rows = Object.entries(sourceMap)
@@ -760,6 +780,13 @@
       container.appendChild(composerRow);
     }
 
+    function markGameActionButton(button) {
+      if (button) {
+        button.classList.add("game-action-button");
+      }
+      return button;
+    }
+
     function commitWolfConversationMessageForActor(actor, phase) {
       if (!actor || !isWolfConversationRole(actor.role)) return;
       if (state.wolfConversation !== "on") return;
@@ -865,6 +892,9 @@
       playersCard.classList.toggle("hidden", phase !== "players");
       revealCard.classList.toggle("hidden", phase !== "reveal");
       gameCard.classList.toggle("hidden", phase !== "game");
+      if (appTitle) {
+        appTitle.classList.toggle("hidden", phase === "game");
+      }
     }
 
     function getAlivePlayers() {
@@ -1102,11 +1132,11 @@
         timerRow.classList.toggle("hidden", phase === "ended");
       }
       const labels = {
-        night0: "1日目夜",
-        night: "夜フェーズ",
-        day: "朝フェーズ",
-        vote: "投票フェーズ",
-        ended: "ゲーム終了",
+        night0: "初日夜",
+        night: "夜",
+        day: "朝",
+        vote: "投票",
+        ended: "終了",
       };
       phaseBadge.textContent = labels[phase];
     }
@@ -1313,6 +1343,7 @@
           if (!actor || !target) return null;
           const result = state.nightActionResultByActor[actor.id] || getDivinationResultText(actor.role, target);
           return {
+            actorId: actor.id,
             actorName: actor.name,
             actorRoleLabel: ROLE_LABELS[actor.role],
             targetName: target.name,
@@ -1344,6 +1375,25 @@
         seerChecks,
         mediumChecks,
       });
+    }
+
+    function getDivinationHistoryLines(actor) {
+      const lines = [];
+
+      const firstDayResult = state.nightZeroSeerResultByPlayer[actor.id];
+      if (firstDayResult) {
+        lines.push(`初日夜: ${firstDayResult}`);
+      }
+
+      state.nightHistory.forEach((log) => {
+        (log.seerChecks || [])
+          .filter((entry) => entry.actorId === actor.id)
+          .forEach((entry) => {
+            lines.push(`第${log.round}夜: ${entry.result}`);
+          });
+      });
+
+      return lines;
     }
 
     function resetNightActions() {
@@ -1467,6 +1517,7 @@
         const dummyButton = document.createElement("button");
         dummyButton.type = "button";
         dummyButton.textContent = "ダミーアクション完了";
+        markGameActionButton(dummyButton);
         dummyButton.addEventListener("click", () => {
           state.nightActionResultByActor[actor.id] = "ダミーアクションを完了しました。";
           state.nightActionDoneByActor[actor.id] = true;
@@ -1481,6 +1532,7 @@
         const checkButton = document.createElement("button");
         checkButton.type = "button";
         checkButton.textContent = "霊視結果を表示";
+        markGameActionButton(checkButton);
         checkButton.addEventListener("click", () => {
           if (!state.lastExecutedByVoteId) {
             state.nightActionResultByActor[actor.id] = "今朝の投票犠牲者がいないため、判定対象がありません。";
@@ -1522,7 +1574,10 @@
         }
       }
       if (isDivinationRole(actor.role)) {
-        nightGuide.textContent = "占い対象を選んでください。";
+        const historyLines = getDivinationHistoryLines(actor);
+        nightGuide.textContent = historyLines.length > 0
+          ? `これまでの占い結果:\n${historyLines.join("\n")}\n\n占い対象を選んでください。`
+          : "これまでの占い結果: なし\n\n占い対象を選んでください。";
       }
       if (actor.role === "knight") {
         if (state.knightConsecutiveGuard === "blocked") {
@@ -1560,24 +1615,13 @@
           : actor.role === "knight"
             ? "護衛する"
             : "襲撃する";
+        markGameActionButton(actionButton);
         actionButton.disabled = !state.nightActionSelection;
         actionButton.addEventListener("click", () => {
           if (!state.nightActionSelection) return;
           selectNightTarget(actor, state.nightActionSelection);
         });
         nightActionButtons.appendChild(actionButton);
-
-        if (state.nightActionSelection) {
-          const resetButton = document.createElement("button");
-          resetButton.type = "button";
-          resetButton.className = "ghost";
-          resetButton.textContent = "選び直す";
-          resetButton.addEventListener("click", () => {
-            state.nightActionSelection = null;
-            renderNightStep();
-          });
-          nightActionButtons.appendChild(resetButton);
-        }
       }
 
       if (actor.role === "ablewolf") {
@@ -1585,6 +1629,7 @@
         noAttackButton.type = "button";
         noAttackButton.className = "ghost";
         noAttackButton.textContent = "襲撃しない";
+        markGameActionButton(noAttackButton);
         noAttackButton.addEventListener("click", () => {
           selectNightNoAttack(actor);
         });
@@ -1604,15 +1649,20 @@
 
       if (!current) {
         nightQuestion.textContent = "全員の夜アクションが完了しました。";
-        nightGuide.textContent = "夜フェーズを確定して朝へ進んでください。";
+        nightGuide.textContent = "朝へ進んでください。";
         nightActionButtons.innerHTML = "";
         nightActionResult.innerHTML = "";
+        nightActionStartButton.classList.add("hidden");
         nightActionStartButton.disabled = true;
+        nightActionDoneButton.classList.add("hidden");
         nightActionDoneButton.disabled = true;
+        markGameActionButton(confirmNightActionButton);
         confirmNightActionButton.classList.remove("hidden");
         return;
       }
 
+      nightActionStartButton.classList.remove("hidden");
+      nightActionDoneButton.classList.remove("hidden");
       confirmNightActionButton.classList.add("hidden");
       nightQuestion.textContent = `${current.name}さんですか？`;
       nightActionButtons.innerHTML = "";
@@ -1730,7 +1780,7 @@
       resetWolfConversationSelections();
       setGamePhase("night");
       renderNightStep();
-      updateGameStatus("夜アクションをプレイヤーごとに順番で実行してください。");
+      updateGameStatus("");
     }
 
     function startMorningPhase(fromNight = true) {
@@ -1759,14 +1809,16 @@
       if (hasWinner) {
         if (toVotePhaseButton) {
           toVotePhaseButton.textContent = "結果を確認して次へ";
+          markGameActionButton(toVotePhaseButton);
         }
         updateGameStatus("朝の結果を確認してから次へ進んでください。");
       } else {
         if (toVotePhaseButton) {
-          toVotePhaseButton.textContent = "投票フェーズへ進む";
+          toVotePhaseButton.textContent = "投票へ進む";
+          markGameActionButton(toVotePhaseButton);
         }
         // ゲーム継続
-        updateGameStatus("議論を行い、投票フェーズへ進んでください。");
+        updateGameStatus("");
       }
     }
 
@@ -1787,8 +1839,7 @@
       setGamePhase("vote");
       startNightAfterVoteButton.classList.add("hidden");
       renderVoteStep();
-      const tieText = state.tieRound > 0 ? `再投票 ${state.tieRound} 回目` : "投票を開始します。";
-      updateGameStatus(tieText);
+      updateGameStatus("");
     }
 
     function renderVoteTally(tallyMap) {
@@ -1913,12 +1964,12 @@
         // 勝利が決定した - 確認ボタンを表示して画面遷移を待つ
         startNightAfterVoteButton.textContent = "結果を確認して次へ";
         startNightAfterVoteButton.classList.remove("hidden");
-        updateGameStatus("投票結果と犠牲者を確認後、結果を確認して次へ進んでください。");
+        updateGameStatus("");
       } else {
         // ゲーム継続 - 通常通り夜へ進むボタンを表示
         startNightAfterVoteButton.textContent = "夜のアクションを開始";
         startNightAfterVoteButton.classList.remove("hidden");
-        updateGameStatus("投票結果を確認してから夜のアクションを開始してください。");
+        updateGameStatus("");
       }
     }
 
@@ -1927,6 +1978,10 @@
       voteCandidateButtons.innerHTML = "";
       voteRoleHint.textContent = "";
       voteRoleHint.classList.add("hidden");
+      if (voteConfirmPopup) {
+        voteConfirmPopup.innerHTML = "";
+        voteConfirmPopup.classList.add("hidden");
+      }
       if (voteWolfMessageLog) {
         voteWolfMessageLog.textContent = "";
         voteWolfMessageLog.classList.add("hidden");
@@ -1952,6 +2007,7 @@
         const startButton = document.createElement("button");
         startButton.type = "button";
         startButton.textContent = "この人の投票開始";
+        markGameActionButton(startButton);
         startButton.addEventListener("click", () => {
           state.voteIdentityConfirmed = true;
           renderVoteStep();
@@ -2022,32 +2078,48 @@
         voteActionBlock.appendChild(button);
       });
 
-      const confirmButton = document.createElement("button");
-      confirmButton.type = "button";
-      confirmButton.textContent = "投票する";
-      confirmButton.disabled = !state.selectedVoteCandidate;
-      confirmButton.addEventListener("click", () => {
-        if (!state.selectedVoteCandidate) return;
-        commitWolfConversationMessageForActor(voter, "vote");
-        state.votesByVoter[voter.id] = state.selectedVoteCandidate;
-        state.selectedVoteCandidate = null;
-        resetWolfConversationSelections();
-        state.voteIdentityConfirmed = false;
-        state.currentVoterIndex += 1;
-        renderVoteStep();
-      });
-      voteActionBlock.appendChild(confirmButton);
+      if (voteConfirmPopup) {
+        voteConfirmPopup.innerHTML = "";
+        if (state.selectedVoteCandidate && selected) {
+          const popupText = document.createElement("p");
+          popupText.className = "vote-confirm-text";
+          popupText.textContent = `${selected.name} さんに投票しますか？`;
 
-      if (state.selectedVoteCandidate) {
-        const cancelButton = document.createElement("button");
-        cancelButton.type = "button";
-        cancelButton.textContent = "選び直す";
-        cancelButton.className = "ghost";
-        cancelButton.addEventListener("click", () => {
-          state.selectedVoteCandidate = null;
-          renderVoteStep();
-        });
-        voteActionBlock.appendChild(cancelButton);
+          const popupButtonRow = document.createElement("div");
+          popupButtonRow.className = "row wrap vote-confirm-actions";
+
+          const popupConfirmButton = document.createElement("button");
+          popupConfirmButton.type = "button";
+          popupConfirmButton.textContent = "投票する";
+          markGameActionButton(popupConfirmButton);
+          popupConfirmButton.addEventListener("click", () => {
+            if (!state.selectedVoteCandidate) return;
+            commitWolfConversationMessageForActor(voter, "vote");
+            state.votesByVoter[voter.id] = state.selectedVoteCandidate;
+            state.selectedVoteCandidate = null;
+            resetWolfConversationSelections();
+            state.voteIdentityConfirmed = false;
+            state.currentVoterIndex += 1;
+            renderVoteStep();
+          });
+
+          const popupBackButton = document.createElement("button");
+          popupBackButton.type = "button";
+          popupBackButton.className = "ghost";
+          popupBackButton.textContent = "戻る";
+          popupBackButton.addEventListener("click", () => {
+            state.selectedVoteCandidate = null;
+            renderVoteStep();
+          });
+
+          popupButtonRow.appendChild(popupConfirmButton);
+          popupButtonRow.appendChild(popupBackButton);
+          voteConfirmPopup.appendChild(popupText);
+          voteConfirmPopup.appendChild(popupButtonRow);
+          voteConfirmPopup.classList.remove("hidden");
+        } else {
+          voteConfirmPopup.classList.add("hidden");
+        }
       }
     }
 
@@ -2141,6 +2213,7 @@
         const executeButton = document.createElement("button");
         executeButton.type = "button";
         executeButton.textContent = "占う";
+        markGameActionButton(executeButton);
         executeButton.disabled = !selectedTargetId;
         executeButton.addEventListener("click", () => {
           const selectedTarget = findPlayerById(state.nightZeroSelectionByPlayer[current.id]);
@@ -2153,20 +2226,6 @@
         });
         if (nightZeroActionButtons) {
           nightZeroActionButtons.appendChild(executeButton);
-        }
-
-        if (selectedTargetId) {
-          const resetButton = document.createElement("button");
-          resetButton.type = "button";
-          resetButton.className = "ghost";
-          resetButton.textContent = "選び直す";
-          resetButton.addEventListener("click", () => {
-            delete state.nightZeroSelectionByPlayer[current.id];
-            renderNightZeroStep();
-          });
-          if (nightZeroActionButtons) {
-            nightZeroActionButtons.appendChild(resetButton);
-          }
         }
 
         nightZeroStartButton.disabled = true;
@@ -2291,6 +2350,7 @@
               const executeButton = document.createElement("button");
               executeButton.type = "button";
               executeButton.textContent = "占う";
+              markGameActionButton(executeButton);
               executeButton.disabled = !selectedTargetId;
               executeButton.addEventListener("click", () => {
                 const selectedTarget = findPlayerById(state.nightZeroSelectionByPlayer[current.id]);
@@ -2303,20 +2363,6 @@
               });
               if (revealActionButtons) {
                 revealActionButtons.appendChild(executeButton);
-              }
-
-              if (selectedTargetId) {
-                const resetButton = document.createElement("button");
-                resetButton.type = "button";
-                resetButton.className = "ghost";
-                resetButton.textContent = "選び直す";
-                resetButton.addEventListener("click", () => {
-                  delete state.nightZeroSelectionByPlayer[current.id];
-                  renderRevealStep();
-                });
-                if (revealActionButtons) {
-                  revealActionButtons.appendChild(resetButton);
-                }
               }
 
               if (revealWolfMates) {
@@ -2353,13 +2399,14 @@
       const keepNames = Boolean(options.keepNames);
       const keepSettings = Boolean(options.keepSettings);
       const previousNames = keepNames ? [...state.names] : [];
+      const previousRoleCounts = keepSettings ? { ...state.roleCounts } : createDefaultRoleCounts();
       const previousTieRule = keepSettings ? state.tieRule : "random";
       const previousShowVoteTally = keepSettings ? state.showVoteTally : false;
       const previousFirstDaySeerMode = keepSettings ? state.firstDaySeerMode : "random-white";
       const previousTestMode = keepSettings ? state.testMode : false;
       const previousKnightConsecutiveGuard = keepSettings ? state.knightConsecutiveGuard : "allowed";
-      const previousWolfConversation = keepSettings ? state.wolfConversation : "off";
-      const previousWolfTargetVisibility = keepSettings ? state.wolfTargetVisibility : "hide";
+      const previousWolfConversation = keepSettings ? state.wolfConversation : "on";
+      const previousWolfTargetVisibility = keepSettings ? state.wolfTargetVisibility : "show";
       
       stopPhaseTimer();
       state.names = keepNames ? previousNames : [];
@@ -2424,7 +2471,7 @@
       }
       winnerText.classList.add("hidden");
       playerNameInput.value = "";
-      state.roleCounts = createDefaultRoleCounts();
+      state.roleCounts = previousRoleCounts;
       setupTieRuleSelect.value = previousTieRule;
       setupShowVoteTallySelect.value = previousShowVoteTally ? "show" : "hide";
       if (setupFirstDaySeerSelect) {

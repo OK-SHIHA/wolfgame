@@ -123,14 +123,32 @@
 
 iOS は `file://` の制限があるため、初回はローカル配信経由が安定です。
 
+### 同じWi-Fiの端末から見る
+
+`8080` 番ポートで待ち受けるサーバーを使うと、同じWi-Fi内の別端末から `http://<PCのIPアドレス>:8080/index.html` で確認できます。
+
+1. PCで起動
+2. PCのローカルIPを確認
+3. ほかの端末から `http://192.168.x.x:8080/index.html` を開く
+
+```bash
+npm run serve:lan
+```
+
+macOS では `1024` 未満のポートを開くため、権限エラーが出る場合があります。そのときは次で起動してください。
+
+```bash
+npm run serve:lan
+```
+
 1. PCでローカル配信
 2. iPhone Safariでアクセス
 3. 共有 → ホーム画面に追加
 4. 以後はオフライン起動可能
 
 ```bash
-cd '/Users/ababa/Library/Mobile Documents/com~apple~CloudDocs/人狼'
-python3 -m http.server 8080
+cd '/Users/ababa/Downloads/アプリ/人狼'
+npm run serve:lan
 ```
 
 ```bash
@@ -140,7 +158,7 @@ ipconfig getifaddr en0
 IP が `192.168.1.23` なら:
 
 ```text
-http://192.168.1.23:8080
+http://192.168.1.23:8080/index.html
 ```
 
 ## ローカルテスト
